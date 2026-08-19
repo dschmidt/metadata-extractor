@@ -86,7 +86,7 @@ public class TiffReader
             }
             final long firstIfdOffsetLong = reader.getInt64(8 + tiffHeaderOffset) + tiffHeaderOffset;
             if (firstIfdOffsetLong < 0 || firstIfdOffsetLong > Integer.MAX_VALUE) {
-                handler.error("First IFD offset is too large: " + firstIfdOffsetLong);
+                handler.error("First IFD offset is out of range: " + firstIfdOffsetLong);
                 return;
             }
             firstIfdOffset = (int) firstIfdOffsetLong;
@@ -97,7 +97,9 @@ public class TiffReader
     }
 
     /**
-     * Processes a TIFF IFD.
+     * Processes a classic (non-BigTIFF) TIFF IFD. Equivalent to calling
+     * {@link #processIfd(TiffHandler, RandomAccessReader, Set, int, int, boolean)} with
+     * {@code isBigTiff == false}.
      *
      * IFD Header:
      * <ul>
@@ -129,8 +131,10 @@ public class TiffReader
     }
 
     /**
-     * Processes a TIFF IFD.
+     * Processes a TIFF IFD, in either the classic or the BigTIFF layout.
      *
+     * Classic IFDs use a 2-byte tag count, 12-byte tag structures (4-byte component count and
+     * 4-byte inline value or offset pointer) and a 4-byte follower IFD pointer.
      * BigTIFF IFDs use an 8-byte tag count, 20-byte tag structures (8-byte component count and
      * 8-byte inline value or offset pointer) and an 8-byte follower IFD pointer.
      *
@@ -174,8 +178,12 @@ public class TiffReader
             int dirTagCount;
             if (isBigTiff) {
                 final long dirTagCountLong = reader.getInt64(ifdOffset);
+                // BigTIFF permits a 64-bit entry count, but this reader is int-indexed and no
+                // real file needs more entries than a classic IFD's 16-bit count allows. Cap at
+                // 0xFFFF to keep the subsequent int arithmetic (dirLength) safe; larger counts
+                // are treated as unsupported rather than illegal.
                 if (dirTagCountLong < 0 || dirTagCountLong > 0xFFFF) {
-                    handler.error("Illegal IFD entry count: " + dirTagCountLong);
+                    handler.error("Unsupported IFD entry count: " + dirTagCountLong);
                     return;
                 }
                 dirTagCount = (int) dirTagCountLong;
@@ -239,7 +247,17 @@ public class TiffReader
                     }
                     byteCount = byteCountOverride;
                 } else {
-                    byteCount = componentCount * format.getComponentSizeBytes();
+                    final int componentSize = format.getComponentSizeBytes();
+                    // Guard against overflow of the 64-bit BigTIFF component count. Without this
+                    // a crafted count near 2^61 makes componentCount * componentSize wrap to a
+                    // small value, bypassing the bounds checks below and (because the IFD-pointer
+                    // check compares two identically-wrapped products) driving the sub-IFD loop
+                    // into an effectively infinite iteration.
+                    if (componentCount > (Long.MAX_VALUE / componentSize)) {
+                        handler.error(String.format("Illegal component count %d for TIFF tag 0x%04X", componentCount, tagId));
+                        continue;
+                    }
+                    byteCount = componentCount * componentSize;
                 }
 
                 final long tagValueOffset;
@@ -282,18 +300,24 @@ public class TiffReader
                 }
                 if (ifdPointerSize != 0) {
                     for (int i = 0; i < componentCount; i++) {
-                        if (handler.tryEnterSubIfd(tagId)) {
-                            isIfdPointer = true;
-                            final long subDirOffsetVal = ifdPointerSize == 4
-                                ? reader.getInt32((int) (tagValueOffset + i * 4L))
-                                : reader.getInt64((int) (tagValueOffset + i * 8L));
-                            final long subDirOffset = tiffHeaderOffset + subDirOffsetVal;
-                            if (subDirOffset < 0 || subDirOffset > Integer.MAX_VALUE) {
-                                handler.error("Illegal sub-IFD offset: " + subDirOffsetVal);
-                                continue;
-                            }
-                            processIfd(handler, reader, processedIfdOffsets, (int) subDirOffset, tiffHeaderOffset, isBigTiff);
+                        if (!handler.tryEnterSubIfd(tagId)) {
+                            // There's no point trying to enter the same tag ID again.
+                            break;
                         }
+                        isIfdPointer = true;
+                        final long subDirOffset = tiffHeaderOffset + (ifdPointerSize == 4
+                            ? reader.getInt32((int) (tagValueOffset + i * 4L))
+                            : reader.getInt64((int) (tagValueOffset + i * 8L)));
+                        if (subDirOffset < Integer.MIN_VALUE || subDirOffset > Integer.MAX_VALUE) {
+                            // BigTIFF offset that cannot be represented by the int-indexed reader.
+                            // Balance the directory pushed by tryEnterSubIfd, then skip this pointer.
+                            handler.error("Illegal sub-IFD offset: " + subDirOffset);
+                            handler.endingIFD();
+                            continue;
+                        }
+                        // In-range offsets (including classic negatives) are validated by processIfd,
+                        // which reports and pops the directory itself, preserving classic behaviour.
+                        processIfd(handler, reader, processedIfdOffsets, (int) subDirOffset, tiffHeaderOffset, isBigTiff);
                     }
                 }
 
