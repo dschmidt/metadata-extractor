@@ -21,16 +21,27 @@
 package com.drew.imaging.heif;
 
 import com.drew.imaging.ImageMetadataReader;
+import com.drew.imaging.isobmff.IsoBoxContext;
+import com.drew.imaging.isobmff.IsoBoxReader;
+import com.drew.imaging.isobmff.IsoItems;
+import com.drew.imaging.mp4.Mp4MetadataReader;
+import com.drew.lang.SequentialReader;
+import com.drew.lang.annotations.NotNull;
 import com.drew.metadata.Directory;
 import com.drew.metadata.Metadata;
 import com.drew.metadata.heif.HeifDirectory;
 import com.drew.metadata.icc.IccDirectory;
+import com.drew.metadata.mp4.Mp4Directory;
 import com.drew.metadata.xmp.XmpDirectory;
 import org.junit.Test;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -44,21 +55,15 @@ public class HeifMetadataReaderTest
     private static final int FTYP_LENGTH = 20;
 
     @Test
-    public void testDeeplyNestedBoxesReportErrorRatherThanOverflowingStack() throws Exception
+    public void testDeeplyNestedBoxesDoNotOverflowTheStack() throws Exception
     {
-        HeifDirectory directory = readNestedContainers(10000);
-
-        assertTrue(containsError(directory, "Box nesting too deep."));
-    }
-
-    @Test
-    public void testNestingLimit() throws Exception
-    {
-        HeifDirectory directory = readNestedContainers(100);
-        assertFalse(containsError(directory, "Box nesting too deep."));
-        assertEquals("heic", directory.getString(HeifDirectory.TAG_MAJOR_BRAND));
-
-        assertTrue(containsError(readNestedContainers(101), "Box nesting too deep."));
+        // The walk only descends into containers on the way to a registered path, so a deep
+        // chain of other containers is skipped as one box.
+        for (int depth : new int[] {100, 101, 10000}) {
+            HeifDirectory directory = readNestedContainers(depth);
+            assertFalse(directory.hasErrors());
+            assertEquals("heic", directory.getString(HeifDirectory.TAG_MAJOR_BRAND));
+        }
     }
 
     @Test
@@ -165,6 +170,125 @@ public class HeifMetadataReaderTest
     }
 
     /** Reads a file whose 'meta' box describes a single 'mime' item, stored in 'mdat', holding an XMP packet. */
+    @Test
+    public void testXmpItemInIdat() throws Exception
+    {
+        byte[] xmp = xmp();
+        byte[] file = itemFile(1, new int[][] {{0, xmp.length}}, xmp, new byte[0]);
+        XmpDirectory directory = HeifMetadataReader.readMetadata(new ByteArrayInputStream(file)).getFirstDirectoryOfType(XmpDirectory.class);
+        assertNotNull(directory);
+        assertEquals("Test", directory.getXmpProperties().get("xmp:CreatorTool"));
+    }
+
+    @Test
+    public void testXmpItemFromTwoExtents() throws Exception
+    {
+        byte[] xmp = xmp();
+        int half = xmp.length / 2;
+        byte[] mdat = concat(Arrays.copyOfRange(xmp, 0, half), new byte[16], Arrays.copyOfRange(xmp, half, xmp.length));
+        int start = itemFile(0, new int[][] {{0, half}, {0, xmp.length - half}}, null, mdat).length - mdat.length;
+        byte[] file = itemFile(0, new int[][] {{start, half}, {start + half + 16, xmp.length - half}}, null, mdat);
+        XmpDirectory directory = HeifMetadataReader.readMetadata(new ByteArrayInputStream(file)).getFirstDirectoryOfType(XmpDirectory.class);
+        assertNotNull(directory);
+        assertEquals("Test", directory.getXmpProperties().get("xmp:CreatorTool"));
+    }
+
+    @Test
+    public void testExtentsAreJoinedInLocationOrder() throws Exception
+    {
+        byte[] xmp = xmp();
+        int half = xmp.length / 2;
+        byte[] mdat = concat(Arrays.copyOfRange(xmp, half, xmp.length), Arrays.copyOfRange(xmp, 0, half));
+        int start = itemFile(0, new int[][] {{0, half}, {0, xmp.length - half}}, null, mdat).length - mdat.length;
+        byte[] file = itemFile(0, new int[][] {{start + xmp.length - half, half}, {start, xmp.length - half}}, null, mdat);
+        XmpDirectory directory = HeifMetadataReader.readMetadata(new ByteArrayInputStream(file)).getFirstDirectoryOfType(XmpDirectory.class);
+        assertNotNull(directory);
+        assertEquals("Test", directory.getXmpProperties().get("xmp:CreatorTool"));
+    }
+
+    @Test
+    public void testReplacedItemReaderGetsTheRawItem() throws Exception
+    {
+        final byte[] xmp = xmp();
+        int start = itemFile(0, new int[][] {{0, xmp.length}}, null, xmp).length - xmp.length;
+        byte[] file = itemFile(0, new int[][] {{start, xmp.length}}, null, xmp);
+        final List<byte[]> items = new ArrayList<byte[]>();
+        List<IsoItems.ItemReader> itemReaders = new ArrayList<IsoItems.ItemReader>(HeifMetadataReader.ALL_ITEM_READERS);
+        assertTrue(itemReaders.remove(HeifMetadataReader.XMP_ITEM_READER));
+        itemReaders.add(new IsoItems.ItemReader()
+        {
+            @Override
+            public boolean accepts(@NotNull IsoItems.Item item)
+            {
+                return HeifMetadataReader.XMP_ITEM_READER.accepts(item);
+            }
+
+            @Override
+            public void readItem(@NotNull IsoBoxContext file, @NotNull IsoItems.Item item, @NotNull SequentialReader data) throws IOException
+            {
+                items.add(data.getBytes(data.available()));
+            }
+        });
+        Metadata metadata = new Metadata();
+        HeifMetadataReader.compile(HeifMetadataReader.ALL_READERS, itemReaders)
+            .read(new ByteArrayInputStream(file), HeifMetadataReader.newRoot(metadata, null));
+        assertEquals(1, items.size());
+        assertArrayEquals(xmp, items.get(0));
+        assertNull(metadata.getFirstDirectoryOfType(XmpDirectory.class));
+    }
+
+    @Test
+    public void testImageSequenceIsReadWithMp4AndHeifReaders() throws Exception
+    {
+        byte[] xmp = xmp();
+        byte[] mvhd = box("mvhd", concat(new byte[12], int32(600), int32(1200), new byte[80]));
+        byte[] hdlr = box("hdlr", concat(new byte[8], ascii("pict"), new byte[13]));
+        byte[] file = concat(itemFile(1, new int[][] {{0, xmp.length}}, xmp, new byte[0]), box("moov", concat(mvhd, box("trak", box("mdia", hdlr)))));
+
+        List<IsoBoxReader> readers = new ArrayList<IsoBoxReader>(HeifMetadataReader.ALL_READERS);
+        readers.addAll(Mp4MetadataReader.ALL_READERS);
+        readers.add(HeifMetadataReader.itemReaders(HeifMetadataReader.ALL_ITEM_READERS));
+
+        Metadata metadata = new Metadata();
+        IsoBoxContext root = HeifMetadataReader.newRoot(metadata, null);
+        Mp4MetadataReader.prepare(root);
+        Mp4MetadataReader.compile(readers).read(new ByteArrayInputStream(file), root);
+
+        assertEquals("Test", metadata.getFirstDirectoryOfType(XmpDirectory.class).getXmpProperties().get("xmp:CreatorTool"));
+        assertEquals(600, metadata.getFirstDirectoryOfType(Mp4Directory.class).getInt(Mp4Directory.TAG_TIME_SCALE));
+        for (Directory directory : metadata.getDirectories())
+            assertFalse(directory.getName() + ": " + directory.getErrors(), directory.hasErrors());
+    }
+
+    private static byte[] xmp()
+    {
+        return ("<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
+            + "<rdf:Description rdf:about=\"\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmp:CreatorTool=\"Test\"/>"
+            + "</rdf:RDF></x:xmpmeta>").getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * A file with one XMP item whose extents use {@code constructionMethod} (0: file offsets,
+     * 1: offsets into {@code idat}), an optional 'idat' in 'meta' and an 'mdat' after it.
+     */
+    private static byte[] itemFile(int constructionMethod, int[][] extents, byte[] idat, byte[] mdat)
+    {
+        byte[] hdlr = box("hdlr", concat(new byte[8], ascii("pict"), new byte[13]));
+        byte[] infe = box("infe", concat(new byte[] {2, 0, 0, 0, 0, 1, 0, 0}, ascii("mime"), new byte[1], ascii("application/rdf+xml"), new byte[1]));
+        byte[] iinf = box("iinf", concat(new byte[] {0, 0, 0, 0, 0, 1}, infe));
+        ByteArrayOutputStream iloc = new ByteArrayOutputStream();
+        // iloc version 1: 4-byte offsets and lengths, no base offset or index, one item
+        byte[] head = {1, 0, 0, 0, 0x44, 0, 0, 1, 0, 1, 0, (byte) constructionMethod, 0, 0, 0, (byte) extents.length};
+        iloc.write(head, 0, head.length);
+        for (int[] extent : extents) {
+            byte[] bytes = concat(int32(extent[0]), int32(extent[1]));
+            iloc.write(bytes, 0, bytes.length);
+        }
+        byte[] meta = box("meta", concat(new byte[4], hdlr, iinf, box("iloc", iloc.toByteArray()), idat == null ? new byte[0] : box("idat", idat)));
+        byte[] ftyp = box("ftyp", concat(ascii("heic"), new byte[4], ascii("mif1")));
+        return concat(ftyp, meta, box("mdat", mdat));
+    }
+
     private static Metadata readSingleItemFile(String contentType) throws Exception
     {
         return readSingleItemFile(contentType, new byte[0], false);
