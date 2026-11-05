@@ -259,6 +259,8 @@ public final class IsoSamples
     }
 
     private static final String TRAK = "moov/trak/";
+    /** The sample tables, read only for tracks the sample reader wants. */
+    private static final Set<String> TABLES = new HashSet<String>(Arrays.asList("stts", "stsc", "stsz", "stz2", "stco", "co64"));
     private static final String STBL = TRAK + "mdia/minf/stbl/";
 
     /** The readers for the tracks and fragments of the file; at most {@code maxSamples} samples are read per track. */
@@ -280,8 +282,13 @@ public final class IsoSamples
             @Override
             public void readBox(@NotNull IsoBoxContext box) throws IOException
             {
-                SequentialReader payload = box.payload();
                 Tracks tracks = tracks(box, reader, maxSamples);
+                if (TABLES.contains(box.box().type)) {
+                    IsoBoxContext trak = box.ancestor("trak");
+                    if (trak == null || Boolean.FALSE.equals(track(trak, tracks).wanted))
+                        return;
+                }
+                SequentialReader payload = box.payload();
                 if (box.parent().box().type.equals("tref")) {
                     readReference(box, payload, tracks, maxSamples);
                     return;
