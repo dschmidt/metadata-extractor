@@ -20,19 +20,130 @@
  */
 package com.drew.imaging.heif;
 
+import com.drew.imaging.isobmff.IsoBoxContext;
+import com.drew.imaging.isobmff.IsoBoxReader;
+import com.drew.imaging.isobmff.IsoBoxReaders;
+import com.drew.imaging.isobmff.IsoItems;
+import com.drew.imaging.isobmff.IsoStandardLayout;
+import com.drew.lang.RandomAccessStreamReader;
+import com.drew.lang.SequentialReader;
 import com.drew.lang.annotations.NotNull;
+import com.drew.lang.annotations.Nullable;
 import com.drew.metadata.Metadata;
-import com.drew.metadata.heif.HeifBoxHandler;
+import com.drew.metadata.exif.ExifReader;
+import com.drew.metadata.heif.HeifDirectory;
+import com.drew.metadata.xmp.XmpReader;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
+/**
+ * Obtains metadata from HEIF files (HEIC, AVIF), with box readers registered by path and item
+ * readers registered by item type; see {@link IsoBoxReaders} for how boxes are walked.
+ */
 public class HeifMetadataReader
 {
+    /** Reads {@code Exif} items into Exif directories. */
+    public static final IsoItems.ItemReader EXIF_ITEM_READER = new IsoItems.ItemReader()
+    {
+        @Override
+        public boolean accepts(@NotNull IsoItems.Item item)
+        {
+            return item.type.equals("Exif");
+        }
+
+        @Override
+        public void readItem(@NotNull IsoBoxContext file, @NotNull IsoItems.Item item, @NotNull SequentialReader data)
+            throws IOException
+        {
+            // ISO/IEC 23008-12:2017 Annex A: the first 4 bytes are the offset of the TIFF header
+            long tiffHeaderOffset = data.getUInt32();
+            if (tiffHeaderOffset > data.available())
+                return;
+            data.skip(tiffHeaderOffset);
+            byte[] tiff = data.getBytes(data.available());
+            new ExifReader().extract(new RandomAccessStreamReader(new ByteArrayInputStream(tiff)), file.metadata());
+        }
+    };
+
+    /** Reads {@code mime} items of type {@code application/rdf+xml} into an XMP directory. */
+    public static final IsoItems.ItemReader XMP_ITEM_READER = new IsoItems.ItemReader()
+    {
+        @Override
+        public boolean accepts(@NotNull IsoItems.Item item)
+        {
+            return item.type.equals("mime") && "application/rdf+xml".equals(item.contentType);
+        }
+
+        @Override
+        public void readItem(@NotNull IsoBoxContext file, @NotNull IsoItems.Item item, @NotNull SequentialReader data)
+            throws IOException
+        {
+            new XmpReader().extract(data.getBytes(data.available()), file.metadata());
+        }
+    };
+
+    /** The item readers {@link #readMetadata(InputStream)} uses. */
+    public static final List<IsoItems.ItemReader> ALL_ITEM_READERS =
+        Collections.unmodifiableList(Arrays.asList(EXIF_ITEM_READER, XMP_ITEM_READER));
+
+    /** The box readers {@link #readMetadata(InputStream)} uses: file type, handler, item and property boxes. */
+    public static final List<IsoBoxReader> ALL_READERS = HeifReaders.ALL_READERS;
+
+    private static final IsoBoxReaders DEFAULT_READERS = compile(ALL_READERS, ALL_ITEM_READERS);
+
+    /**
+     * The readers of {@code itemReaders} for the items of the file's {@code meta}, for a walk
+     * compiled for another format, such as an image sequence read with MP4 readers too.
+     */
+    @NotNull
+    public static IsoBoxReader itemReaders(@NotNull List<? extends IsoItems.ItemReader> itemReaders)
+    {
+        return IsoItems.readers(itemReaders, "meta");
+    }
+
+    /** Prepares a walk that calls {@code readers} for boxes and {@code itemReaders} for items; build it once and reuse it. */
+    @NotNull
+    public static IsoBoxReaders compile(@NotNull Iterable<? extends IsoBoxReader> readers,
+                                        @NotNull Iterable<? extends IsoItems.ItemReader> itemReaders)
+    {
+        List<IsoItems.ItemReader> items = new java.util.ArrayList<IsoItems.ItemReader>();
+        for (IsoItems.ItemReader reader : itemReaders)
+            items.add(reader);
+        List<IsoBoxReader> boxes = new java.util.ArrayList<IsoBoxReader>();
+        for (IsoBoxReader reader : readers)
+            boxes.add(reader);
+        boxes.add(itemReaders(items));
+        return new IsoBoxReaders(IsoStandardLayout.INSTANCE, boxes);
+    }
+
+    /**
+     * Reads {@code inputStream}. If item data comes before {@code meta} and the stream supports
+     * {@link InputStream#mark}, the stream is read a second time for it.
+     */
     @NotNull
     public static Metadata readMetadata(@NotNull InputStream inputStream)
     {
         Metadata metadata = new Metadata();
-        new HeifReader().extract(inputStream, new HeifBoxHandler(metadata));
+        DEFAULT_READERS.read(inputStream, newRoot(metadata, null), Integer.MAX_VALUE);
         return metadata;
+    }
+
+    /**
+     * The file context for reading into {@code metadata}: it adds a {@link HeifDirectory}.
+     * Problems go to {@code errors}, or to the {@link HeifDirectory} when it is {@code null}.
+     */
+    @NotNull
+    public static IsoBoxContext newRoot(@NotNull Metadata metadata, @Nullable IsoBoxContext.ErrorHandler errors)
+    {
+        HeifDirectory directory = new HeifDirectory();
+        metadata.addDirectory(directory);
+        IsoBoxContext root = errors == null ? IsoBoxContext.root(metadata, directory) : IsoBoxContext.root(metadata, errors);
+        root.put(HeifReaders.Directories.class, new HeifReaders.Directories(directory));
+        return root;
     }
 }
