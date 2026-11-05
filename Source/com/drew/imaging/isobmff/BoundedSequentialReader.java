@@ -105,6 +105,12 @@ final class BoundedSequentialReader extends SequentialReader
         return new OffsetByteArrayReader(_bufferArray, (int) (position() - _bufferStart), _bufferStart);
     }
 
+    /** Reads from the input as asked, never the payload in one piece: for a reader that skips most of it. */
+    void streamed()
+    {
+        _decided = true;
+    }
+
     private SequentialReader source() throws IOException
     {
         if (!_decided) {

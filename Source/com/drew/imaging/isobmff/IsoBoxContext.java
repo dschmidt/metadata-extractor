@@ -334,6 +334,17 @@ public final class IsoBoxContext
         _payload = null;
     }
 
+    /** As {@link #stream}, for skipping through the payload: it is never read in one piece. */
+    void streamUnbuffered(@NotNull IsoBoxIterator iterator)
+    {
+        _iterator = iterator;
+        _bytes = null;
+        SequentialReader payload = iterator.payload();
+        if (payload instanceof BoundedSequentialReader)
+            ((BoundedSequentialReader) payload).streamed();
+        _payload = payload;
+    }
+
     void buffer(@NotNull byte[] bytes)
     {
         _iterator = null;

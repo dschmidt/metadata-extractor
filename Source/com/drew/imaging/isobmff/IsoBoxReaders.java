@@ -269,7 +269,7 @@ public final class IsoBoxReaders
         {
             IsoBox box = context.box();
             try {
-                context.stream(boxes);
+                context.streamUnbuffered(boxes);
                 SequentialReader payload = context.payload();
                 for (int first = 0; first < ranges.size(); ) {
                     long start = ranges.get(first).offset;
