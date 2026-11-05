@@ -123,6 +123,15 @@ public class IsoSamplesTest
     }
 
     @Test
+    public void testCappedTracksAreReported() throws Exception
+    {
+        List<String> errors = new ArrayList<String>();
+        new IsoBoxReaders(PLAIN, Collections.singletonList(IsoSamples.readers(new Recorder(), 2)))
+            .read(new IsoBoxIterator(new ByteArrayInputStream(file(false))), IsoBoxContext.root(new Metadata(), collect(errors)));
+        assertEquals(Collections.singletonList("Track 0 has more than 2 samples; the rest are not read"), errors);
+    }
+
+    @Test
     public void testSamplesOfTrackFragmentsAreRead() throws Exception
     {
         Recorder recorder = new Recorder();

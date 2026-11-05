@@ -81,6 +81,8 @@ public final class IsoSamples
         long defaultSampleSize;
         int samples;
         long time;
+        /** Whether the track holds more samples than are read; reported at the end of the walk. */
+        boolean capped;
 
         Track() {}
 
@@ -209,13 +211,16 @@ public final class IsoSamples
     static final class SampleSizes
     {
         final int count;
+        /** The number of sizes the box holds, before the cap. */
+        final long present;
         private final long _fixed;
         @Nullable
         private final long[] _sizes;
 
-        SampleSizes(int count, long fixed, @Nullable long[] sizes)
+        SampleSizes(int count, long present, long fixed, @Nullable long[] sizes)
         {
             this.count = count;
+            this.present = present;
             _fixed = fixed;
             _sizes = sizes;
         }
@@ -319,6 +324,17 @@ public final class IsoSamples
         if (tracks == null) {
             final Tracks created = new Tracks();
             box.root().put(Tracks.class, created);
+            box.root().whenDone(new IsoBoxReaders.Callback()
+            {
+                @Override
+                public void read(@NotNull IsoBoxContext root)
+                {
+                    for (Track track : created.all) {
+                        if (track.capped)
+                            root.addError("Track " + track.id + " has more than " + maxSamples + " samples; the rest are not read");
+                    }
+                }
+            });
             IsoBoxContext moov = box.ancestor("moov");
             if (moov != null) {
                 moov.whenDone(new IsoBoxReaders.Callback()
@@ -326,7 +342,7 @@ public final class IsoSamples
                     @Override
                     public void read(@NotNull IsoBoxContext done)
                     {
-                        requestTables(done, created, reader);
+                        requestTables(done, created, reader, maxSamples);
                     }
                 });
             }
@@ -403,21 +419,23 @@ public final class IsoSamples
             long size = payload.getUInt32();
             long declared = payload.getUInt32();
             if (size != 0) {
-                track.sampleSizes = new SampleSizes((int) Math.min(declared, maxSamples), size, null);
+                track.sampleSizes = new SampleSizes((int) Math.min(declared, maxSamples), declared, size, null);
                 return;
             }
-            int count = (int) Math.min(Math.min(declared, maxSamples), remaining(box) / 4);
+            long present = Math.min(declared, remaining(box) / 4);
+            int count = (int) Math.min(present, maxSamples);
             long[] sizes = new long[count];
             for (int i = 0; i < count; i++)
                 sizes[i] = payload.getUInt32();
-            track.sampleSizes = new SampleSizes(count, 0, sizes);
+            track.sampleSizes = new SampleSizes(count, present, 0, sizes);
         } else if (type.equals("stz2")) {
             payload.skip(3);
             int fieldSize = payload.getUInt8();
             if (fieldSize != 4 && fieldSize != 8 && fieldSize != 16)
                 throw new IOException("Invalid field size " + fieldSize);
             long declared = payload.getUInt32();
-            int count = (int) Math.min(Math.min(declared, maxSamples), remaining(box) * 8 / fieldSize);
+            long present = Math.min(declared, remaining(box) * 8 / fieldSize);
+            int count = (int) Math.min(present, maxSamples);
             long[] sizes = new long[count];
             for (int i = 0; i < count; i++) {
                 if (fieldSize == 16) {
@@ -431,7 +449,7 @@ public final class IsoSamples
                         sizes[i] = pair & 0x0F;
                 }
             }
-            track.sampleSizes = new SampleSizes(count, 0, sizes);
+            track.sampleSizes = new SampleSizes(count, present, 0, sizes);
         } else if (type.equals("stsc")) {
             track.chunkRuns = pairs(box, payload, 12, maxSamples);
         } else if (type.equals("stts")) {
@@ -468,7 +486,7 @@ public final class IsoSamples
     }
 
     /** Once {@code moov} is read: decides on each track and asks for the samples its tables locate. */
-    private static void requestTables(@NotNull IsoBoxContext moov, @NotNull Tracks tracks, @NotNull SampleReader reader)
+    private static void requestTables(@NotNull IsoBoxContext moov, @NotNull Tracks tracks, @NotNull SampleReader reader, int maxSamples)
     {
         if (tracks.requested)
             return;
@@ -489,8 +507,12 @@ public final class IsoSamples
         }
         for (Track track : tracks.all) {
             track.accepted = !Boolean.FALSE.equals(track.wanted) && reader.accepts(track);
-            if (track.accepted)
+            if (track.accepted) {
                 requestTable(moov, track, reader);
+                SampleSizes sizes = track.sampleSizes;
+                if (sizes != null && sizes.present > maxSamples)
+                    track.capped = true;
+            }
             track.chunkOffsets = null;
             track.sampleSizes = null;
             track.chunkRuns = null;
@@ -640,6 +662,8 @@ public final class IsoSamples
             }
             offset += size;
         }
+        if (i < count && track != null && !track.lost)
+            track.capped = true;
         if (i < count) {
             long size = fragment.defaultSampleSize;
             long rest = count - i;
