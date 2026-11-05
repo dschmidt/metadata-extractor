@@ -20,6 +20,8 @@
  */
 package com.drew.imaging.isobmff;
 
+import com.drew.lang.SequentialByteArrayReader;
+import com.drew.lang.SequentialReader;
 import com.drew.lang.annotations.NotNull;
 import com.drew.lang.annotations.Nullable;
 
@@ -89,6 +91,7 @@ public final class IsoBoxReaders
     private final Node _root = new Node();
     /** Every reader, in the order the readers of one box run: the layout's first, then as passed. */
     private final List<IsoBoxReader> _order = new ArrayList<IsoBoxReader>();
+    private static final List<Node> NOWHERE = Collections.singletonList(new Node());
 
     /** A walk with {@link #DEFAULT_MAX_BUFFERED_PAYLOAD}. */
     public IsoBoxReaders(@NotNull IsoBoxLayout layout, @NotNull Iterable<? extends IsoBoxReader> readers)
@@ -99,6 +102,7 @@ public final class IsoBoxReaders
     /**
      * @param maxBufferedPayload the largest payload read into memory for several readers of one
      *                           box
+     *                           or for ranges that overlap
      */
     public IsoBoxReaders(@NotNull IsoBoxLayout layout, @NotNull Iterable<? extends IsoBoxReader> readers, long maxBufferedPayload)
     {
@@ -126,19 +130,89 @@ public final class IsoBoxReaders
     /**
      * Reads {@code inputStream}, starting from the file context {@code root} (see
      * {@link IsoBoxContext#root}).
+     * Ranges asked for that could not be read are reported as errors; to read them in a second
+     * pass over a marked stream, see {@link #read(InputStream, IsoBoxContext, int)}.
      */
     public void read(@NotNull InputStream inputStream, @NotNull IsoBoxContext root)
     {
         read(new IsoBoxIterator(inputStream), root);
+        reportPendingRanges(root);
+    }
+
+    /**
+     * Reads {@code inputStream} like {@link #read(InputStream, IsoBoxContext)}. Data that comes
+     * before the boxes that locate it, such as HEIF items in an {@code mdat} before
+     * {@code meta}, needs a second pass: if {@code rereadLimit} is positive and the stream
+     * supports {@link InputStream#mark}, the stream is marked with that limit and read again for
+     * that data only. Data that still could not be read is reported as an error.
+     */
+    public void read(@NotNull InputStream inputStream, @NotNull IsoBoxContext root, int rereadLimit)
+    {
+        boolean marked = rereadLimit > 0 && inputStream.markSupported();
+        if (marked)
+            inputStream.mark(rereadLimit);
+        read(new IsoBoxIterator(inputStream), root);
+        if (marked && hasPendingRanges(root)) {
+            try {
+                inputStream.reset();
+                readRanges(new IsoBoxIterator(inputStream), root);
+            } catch (IOException e) {
+                root.addError("Unable to read the input a second time: " + e.getMessage());
+            }
+        }
+        reportPendingRanges(root);
     }
 
     /**
      * Reads {@code boxes}, starting from the file context {@code root} (see
      * {@link IsoBoxContext#root}).
+     * Ranges asked for that came before the boxes that located them stay pending (see
+     * {@link #hasPendingRanges}): follow with {@link #readRanges} over a second pass, or with
+     * {@link #reportPendingRanges}.
      */
     public void read(@NotNull IsoBoxIterator boxes, @NotNull IsoBoxContext root)
     {
+        root._nodes = _root.self;
+        root._readers = this;
         new Walk().walk(boxes, root, _root.self);
+        root.done();
+    }
+
+    /**
+     * Reads {@code boxes}, a second pass over the same input, for the pending ranges only, then
+     * reports those still not served.
+     */
+    public void readRanges(@NotNull IsoBoxIterator boxes, @NotNull IsoBoxContext root)
+    {
+        root._readers = this;
+        new Walk().walk(boxes, root, NOWHERE);
+        reportPendingRanges(root);
+    }
+
+    /** Whether ranges asked for are still unserved. */
+    public static boolean hasPendingRanges(@NotNull IsoBoxContext root)
+    {
+        return root._ranges != null && !root._ranges.isEmpty();
+    }
+
+    /** Reports the ranges still unserved as one error and forgets them. */
+    public static void reportPendingRanges(@NotNull IsoBoxContext root)
+    {
+        if (!hasPendingRanges(root))
+            return;
+        List<Ranges.Range> ranges = root._ranges.takeAll();
+        long bytes = 0;
+        for (Ranges.Range range : ranges)
+            bytes += range.length;
+        root.addError(ranges.size() + (ranges.size() == 1 ? " range" : " ranges") + " of data (" + bytes + " bytes, from input offset "
+            + ranges.get(0).offset + ") not read: it comes before the boxes that locate it, or lies outside any box");
+    }
+
+    /** Walks {@code boxes} as the children of {@code parent}, with the readers registered below it. */
+    @SuppressWarnings("unchecked")
+    void walkBoxes(@NotNull IsoBoxIterator boxes, @NotNull IsoBoxContext parent)
+    {
+        new Walk().walk(boxes, parent, parent._nodes == null ? NOWHERE : (List<Node>) parent._nodes);
     }
 
     private final class Walk
@@ -155,9 +229,19 @@ public final class IsoBoxReaders
                             + container + "'; read to the end of '" + container + "'");
                     }
                     List<Node> next = step(nodes, box);
+                    Ranges ranges = parent.root()._ranges;
+                    if (next.isEmpty() && ranges != null && !ranges.isEmpty()) {
+                        long end = box.payloadSize == -1 ? Long.MAX_VALUE : box.payloadOffset + box.payloadSize;
+                        if (ranges.within(box.payloadOffset, end))
+                            serve(boxes, new IsoBoxContext(parent, box), ranges.take(box.payloadOffset, end));
+                        if (_ended || parent.root()._stopped)
+                            return;
+                        continue;
+                    }
                     if (next.isEmpty())
                         continue;
                     IsoBoxContext context = new IsoBoxContext(parent, box);
+                    context._nodes = next;
                     try {
                         boolean descend = false;
                         for (Node node : next)
@@ -166,11 +250,74 @@ public final class IsoBoxReaders
                     } catch (IOException e) {
                         report(context, "Error reading box '" + box.type + "': " + e.getMessage(), e);
                     }
+                    context.done();
                     if (_ended)
+                        return;
+                    if (parent.root()._stopped)
                         return;
                 }
             } catch (IOException e) {
                 report(parent, String.valueOf(e.getMessage()), e);
+            }
+        }
+
+        /**
+         * Hands the ranges inside {@code context}'s payload to their readers, in order. Ranges
+         * that overlap are read into memory together, and each reader gets a view of its range.
+         */
+        private void serve(IsoBoxIterator boxes, IsoBoxContext context, List<Ranges.Range> ranges)
+        {
+            IsoBox box = context.box();
+            try {
+                context.stream(boxes);
+                SequentialReader payload = context.payload();
+                for (int first = 0; first < ranges.size(); ) {
+                    long start = ranges.get(first).offset;
+                    long end = start + ranges.get(first).length;
+                    int last = first + 1;
+                    while (last < ranges.size() && ranges.get(last).offset < end) {
+                        end = Math.max(end, ranges.get(last).offset + ranges.get(last).length);
+                        last++;
+                    }
+                    List<Ranges.Range> group = ranges.subList(first, last);
+                    first = last;
+                    long position = start - box.payloadOffset;
+                    if (position < payload.getPosition()) {
+                        context.addError("Range at input offset " + start + " lies before the data already read; skipped");
+                        continue;
+                    }
+                    payload.skip(position - payload.getPosition());
+                    if (group.size() == 1) {
+                        serve(context, group.get(0), context.slice(group.get(0).length));
+                    } else if (end - start > _maxBufferedPayload) {
+                        context.addError("Overlapping ranges at input offset " + start + " (" + (end - start)
+                            + " bytes) are too large to read into memory; skipped");
+                    } else {
+                        byte[] bytes = payload.getBytes((int) (end - start));
+                        for (Ranges.Range range : group) {
+                            int from = (int) (range.offset - start);
+                            serve(context, range, new BoundedSequentialReader(new SequentialByteArrayReader(bytes, from), from, from + range.length, box));
+                        }
+                    }
+                    if (_ended || context.root()._stopped)
+                        return;
+                    long left = end - box.payloadOffset - payload.getPosition();
+                    if (left > 0)
+                        payload.skip(left);
+                }
+            } catch (IOException e) {
+                report(context, "Error reading box '" + box.type + "': " + e.getMessage(), e);
+            } finally {
+                context.release();
+            }
+        }
+
+        private void serve(IsoBoxContext context, Ranges.Range range, SequentialReader data)
+        {
+            try {
+                range.reader.read(context, data);
+            } catch (IOException e) {
+                report(context, "Error reading range at input offset " + range.offset + ": " + e.getMessage(), e);
             }
         }
 

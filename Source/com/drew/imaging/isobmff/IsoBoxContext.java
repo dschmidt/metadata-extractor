@@ -28,7 +28,9 @@ import com.drew.metadata.Directory;
 import com.drew.metadata.Metadata;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * One box during a walk by {@link IsoBoxReaders}, or the file itself at the root.
@@ -60,6 +62,19 @@ public final class IsoBoxContext
     private IsoBoxIterator _iterator;
     @Nullable
     private byte[] _bytes;
+    /** Where this box is in the registered paths; set by the walk. */
+    @Nullable
+    Object _nodes;
+    /** The readers of the walk in progress, on the root only. */
+    @Nullable
+    IsoBoxReaders _readers;
+    /** Whether a reader ended the walk, on the root only. */
+    boolean _stopped;
+    /** The ranges asked for and not served yet, on the root only. */
+    @Nullable
+    Ranges _ranges;
+    @Nullable
+    private List<IsoBoxReaders.Callback> _whenDone;
 
     /** Receives the problems of a walk. */
     public interface ErrorHandler
@@ -225,6 +240,81 @@ public final class IsoBoxContext
         for (IsoBoxContext context = this; context._parent != null; context = context._parent)
             depth++;
         return depth;
+    }
+
+    /**
+     * Calls {@code callback} with this context once the walk has passed this box and everything
+     * in it, for a reader that needs several of its children together, such as the sample tables
+     * of a track. On the file context it runs at the end of the walk.
+     */
+    public void whenDone(@NotNull IsoBoxReaders.Callback callback)
+    {
+        if (_whenDone == null)
+            _whenDone = new ArrayList<IsoBoxReaders.Callback>(1);
+        _whenDone.add(callback);
+    }
+
+    /** Runs and forgets the callbacks of {@link #whenDone}. */
+    void done()
+    {
+        List<IsoBoxReaders.Callback> callbacks = _whenDone;
+        if (callbacks == null)
+            return;
+        _whenDone = null;
+        for (IsoBoxReaders.Callback callback : callbacks) {
+            try {
+                callback.read(this);
+            } catch (IOException e) {
+                addError("Error after reading box '" + (_box == null ? "" : _box.type) + "': " + e.getMessage());
+            }
+        }
+    }
+
+    /** Reads a range of the input that a reader asked for with {@link #requestRange}. */
+    public interface RangeReader
+    {
+        /**
+         * @param box  the box the range lies in, typically {@code mdat}
+         * @param data a reader limited to the range; whatever is not read is skipped
+         */
+        void read(@NotNull IsoBoxContext box, @NotNull SequentialReader data) throws IOException;
+    }
+
+    /**
+     * Asks for {@code length} bytes at input position {@code offset}, for data that structure
+     * boxes locate rather than a path, such as HEIF items or track samples. The walk hands them
+     * to {@code reader} when it passes that position inside a box no reader is registered for,
+     * skipping everything else. A range the walk has already passed stays pending; see
+     * {@link IsoBoxReaders#readRanges}.
+     */
+    public void requestRange(long offset, long length, @NotNull RangeReader reader)
+    {
+        if (_root._ranges == null)
+            _root._ranges = new Ranges();
+        _root._ranges.add(new Ranges.Range(offset, length, reader));
+    }
+
+    /**
+     * Walks {@code boxes}, complete boxes such as a decompressed payload, as if they were the
+     * children of this box: readers registered below this box's path are called for them. For
+     * QuickTime's compressed {@code cmov}, a reader calls it on {@link #root()} with the
+     * decompressed {@code moov}. Box offsets in {@code boxes} are indexes into the array.
+     */
+    public void walkBoxes(@NotNull byte[] boxes) throws IOException
+    {
+        IsoBoxReaders readers = _root._readers;
+        if (readers == null)
+            throw new IllegalStateException("No walk in progress");
+        int depth = depth() + 1;
+        if (depth > IsoBoxIterator.MAX_DEPTH)
+            throw new IOException("Maximum box nesting depth exceeded");
+        readers.walkBoxes(new IsoBoxIterator(new SequentialByteArrayReader(boxes), boxes.length, depth), this);
+    }
+
+    /** Ends the walk after the current box: nothing further is read from the input. */
+    public void stop()
+    {
+        _root._stopped = true;
     }
 
     /** The rest of the payload as an array. */

@@ -20,6 +20,7 @@
  */
 package com.drew.imaging.isobmff;
 
+import com.drew.lang.SequentialReader;
 import com.drew.lang.annotations.NotNull;
 import com.drew.lang.annotations.Nullable;
 import com.drew.metadata.Metadata;
@@ -31,6 +32,7 @@ import java.io.DataOutputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.SequenceInputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -418,6 +420,151 @@ public class IsoBoxReadersTest
         read(new IsoBoxReaders(PLAIN, Arrays.asList(IsoBoxReaders.on(first, "ilst/*"), IsoBoxReaders.on(first, "ilst/*"))), file, new ArrayList<String>());
         // free (12) + ilst header (8) + Anam header (8)
         assertEquals(Arrays.asList("data@28", "data@28", "data@28"), taken);
+    }
+
+    @Test
+    public void testWhenDoneRunsAfterTheChildren() throws Exception
+    {
+        final List<String> reads = new ArrayList<String>();
+        IsoBoxReader child = IsoBoxReaders.on(new IsoBoxReaders.Callback()
+        {
+            @Override
+            public void read(@NotNull IsoBoxContext box)
+            {
+                reads.add(box.box().type);
+                if (box.parent().get(String.class) == null) {
+                    box.parent().put(String.class, "registered");
+                    box.parent().whenDone(new IsoBoxReaders.Callback()
+                    {
+                        @Override
+                        public void read(@NotNull IsoBoxContext done)
+                        {
+                            reads.add("done:" + done.box().type);
+                        }
+                    });
+                    box.root().whenDone(new IsoBoxReaders.Callback()
+                    {
+                        @Override
+                        public void read(@NotNull IsoBoxContext done)
+                        {
+                            reads.add("done:file");
+                        }
+                    });
+                }
+            }
+        }, "trak/*");
+        byte[] file = join(box("trak", join(box("tkhd", new byte[0]), box("mdia", new byte[0]))), box("free", new byte[0]));
+        read(new IsoBoxReaders(PLAIN, Collections.singletonList(child)), file, new ArrayList<String>());
+        assertEquals(Arrays.asList("tkhd", "mdia", "done:trak", "done:file"), reads);
+    }
+
+    @Test
+    public void testStopEndsTheWalk() throws Exception
+    {
+        final List<String> reads = new ArrayList<String>();
+        IsoBoxReader stopper = IsoBoxReaders.on(new IsoBoxReaders.Callback()
+        {
+            @Override
+            public void read(@NotNull IsoBoxContext box)
+            {
+                reads.add(box.path());
+                box.stop();
+            }
+        }, "moov/mvhd");
+        IsoBoxReader later = recorder("later", reads, "free");
+        byte[] head = join(box("moov", box("mvhd", new byte[4])), header(8 + 10000000, "mdat"));
+        final int[] read = new int[1];
+        InputStream in = new SequenceInputStream(new ByteArrayInputStream(head), new InputStream()
+        {
+            @Override
+            public int read()
+            {
+                read[0]++;
+                return 0;
+            }
+        });
+        IsoBoxContext root = IsoBoxContext.root(new Metadata(), collect(new ArrayList<String>()));
+        new IsoBoxReaders(PLAIN, Arrays.asList(stopper, later)).read(new IsoBoxIterator(in), root);
+        assertEquals(Collections.singletonList("moov/mvhd"), reads);
+        assertEquals(0, read[0]);
+    }
+
+    @Test
+    public void testDecompressedBoxesAreWalkedWithTheSameReaders() throws Exception
+    {
+        final List<String> reads = new ArrayList<String>();
+        IsoBoxReader cmov = IsoBoxReaders.on(new IsoBoxReaders.Callback()
+        {
+            @Override
+            public void read(@NotNull IsoBoxContext box) throws IOException
+            {
+                // stands in for inflating cmvd: the payload already is the moov box
+                box.root().walkBoxes(box.payloadBytes());
+            }
+        }, "moov/cmov");
+        byte[] inner = box("moov", box("mvhd", new byte[] {7}));
+        read(new IsoBoxReaders(PLAIN, Arrays.asList(cmov, recorder("r", reads, "moov/mvhd"))), box("moov", box("cmov", inner)), new ArrayList<String>());
+        assertEquals(Collections.singletonList("r:moov/mvhd=7"), reads);
+    }
+
+    private static IsoBoxReaders rangeRequester(final List<String> got, final long... offsets)
+    {
+        return new IsoBoxReaders(PLAIN, Collections.singletonList(IsoBoxReaders.on(new IsoBoxReaders.Callback()
+        {
+            @Override
+            public void read(@NotNull IsoBoxContext box)
+            {
+                for (final long offset : offsets) {
+                    box.requestRange(offset, 2, new IsoBoxContext.RangeReader()
+                    {
+                        @Override
+                        public void read(@NotNull IsoBoxContext data, @NotNull SequentialReader reader) throws IOException
+                        {
+                            got.add(data.box().type + "@" + offset + "=" + reader.getUInt8() + "," + reader.getUInt8());
+                        }
+                    });
+                }
+            }
+        }, "moov/stco")));
+    }
+
+    @Test
+    public void testRangesAfterTheirLocationAreReadInOrder() throws Exception
+    {
+        List<String> got = new ArrayList<String>();
+        // moov (8) + stco (8) = 16; mdat payload at 24
+        byte[] file = join(box("moov", box("stco", new byte[0])), box("mdat", new byte[] {1, 2, 3, 4, 5, 6}));
+        read(rangeRequester(got, 28, 24), file, new ArrayList<String>());
+        assertEquals(Arrays.asList("mdat@24=1,2", "mdat@28=5,6"), got);
+    }
+
+    @Test
+    public void testOverlappingRangesAreEachReadInFull() throws Exception
+    {
+        List<String> got = new ArrayList<String>();
+        // mdat payload at 24; ranges of 2 bytes at 24, 25 and 24 overlap, 28 stands alone
+        byte[] file = join(box("moov", box("stco", new byte[0])), box("mdat", new byte[] {1, 2, 3, 4, 5, 6}));
+        List<String> errors = new ArrayList<String>();
+        read(rangeRequester(got, 24, 25, 24, 28), file, errors);
+        assertEquals(Arrays.asList("mdat@24=1,2", "mdat@24=1,2", "mdat@25=2,3", "mdat@28=5,6"), got);
+        assertTrue(errors.toString(), errors.isEmpty());
+    }
+
+    @Test
+    public void testRangesBeforeTheirLocationNeedASecondPass() throws Exception
+    {
+        List<String> got = new ArrayList<String>();
+        byte[] file = join(box("mdat", new byte[] {1, 2, 3}), box("moov", box("stco", new byte[0])));
+        IsoBoxReaders readers = rangeRequester(got, 9);
+        List<String> errors = new ArrayList<String>();
+        IsoBoxContext root = IsoBoxContext.root(new Metadata(), collect(errors));
+        readers.read(new IsoBoxIterator(new ByteArrayInputStream(file)), root);
+        assertTrue(got.isEmpty());
+        assertTrue(IsoBoxReaders.hasPendingRanges(root));
+        readers.readRanges(new IsoBoxIterator(new ByteArrayInputStream(file)), root);
+        assertEquals(Collections.singletonList("mdat@9=2,3"), got);
+        assertFalse(IsoBoxReaders.hasPendingRanges(root));
+        assertTrue(errors.isEmpty());
     }
 
     @Test(expected = IllegalArgumentException.class)
