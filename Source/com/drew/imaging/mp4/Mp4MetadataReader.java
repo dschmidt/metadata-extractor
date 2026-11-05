@@ -20,21 +20,45 @@
  */
 package com.drew.imaging.mp4;
 
+import com.drew.imaging.isobmff.IsoBoxContext;
+import com.drew.imaging.isobmff.IsoBoxReader;
+import com.drew.imaging.isobmff.IsoBoxReaders;
 import com.drew.lang.annotations.NotNull;
+import com.drew.lang.annotations.Nullable;
 import com.drew.metadata.Metadata;
 import com.drew.metadata.file.FileSystemMetadataReader;
-import com.drew.metadata.mp4.Mp4BoxHandler;
+import com.drew.metadata.mp4.Mp4Directory;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.List;
 
 /**
- * @author Payton Garland
+ * Obtains metadata from MP4 files, with box readers registered by path; see
+ * {@link IsoBoxReaders} for how they are walked.
  */
 public class Mp4MetadataReader
 {
+    /**
+     * The readers {@link #readMetadata(InputStream)} uses. Pass them, with readers of your own,
+     * to {@link #readMetadata(InputStream, Iterable)} to read further boxes.
+     */
+    public static final List<IsoBoxReader> ALL_READERS = Mp4Readers.ALL_READERS;
+
+    /** The reader in {@link #ALL_READERS} for {@code udta} boxes, for callers that read them their own way. */
+    public static final IsoBoxReader USER_DATA_READER = Mp4Readers.USER_DATA_READER;
+
+    private static final IsoBoxReaders DEFAULT_READERS = compile(ALL_READERS);
+
+    /** Prepares a walk over the MP4 structure that calls {@code readers}; build it once and reuse it. */
+    @NotNull
+    public static IsoBoxReaders compile(@NotNull Iterable<? extends IsoBoxReader> readers)
+    {
+        return new IsoBoxReaders(Mp4Readers.LAYOUT, readers);
+    }
+
     @NotNull
     public static Metadata readMetadata(@NotNull final File file) throws IOException
     {
@@ -53,7 +77,45 @@ public class Mp4MetadataReader
     public static Metadata readMetadata(@NotNull InputStream inputStream)
     {
         Metadata metadata = new Metadata();
-        Mp4Reader.extract(inputStream, new Mp4BoxHandler(metadata));
+        DEFAULT_READERS.read(inputStream, newRoot(metadata, null));
         return metadata;
+    }
+
+    @NotNull
+    public static Metadata readMetadata(@NotNull InputStream inputStream, @NotNull Iterable<? extends IsoBoxReader> readers)
+    {
+        Metadata metadata = new Metadata();
+        compile(readers).read(inputStream, newRoot(metadata, null));
+        return metadata;
+    }
+
+    /**
+     * The file context for reading into {@code metadata}: it adds an {@link Mp4Directory} and
+     * stores it under its class. Problems go to {@code errors}, or to the {@link Mp4Directory}
+     * when it is {@code null}. Store state for your own readers in it before calling
+     * {@link IsoBoxReaders#read(InputStream, IsoBoxContext)}.
+     */
+    @NotNull
+    public static IsoBoxContext newRoot(@NotNull Metadata metadata, @Nullable IsoBoxContext.ErrorHandler errors)
+    {
+        Mp4Directory directory = new Mp4Directory();
+        IsoBoxContext root = errors == null ? IsoBoxContext.root(metadata, directory) : IsoBoxContext.root(metadata, errors);
+        prepare(root, directory);
+        return root;
+    }
+
+    /**
+     * Prepares a file context made for another format to also run these readers, for files
+     * that combine formats: it adds an {@link Mp4Directory}.
+     */
+    public static void prepare(@NotNull IsoBoxContext root)
+    {
+        prepare(root, new Mp4Directory());
+    }
+
+    private static void prepare(@NotNull IsoBoxContext root, @NotNull Mp4Directory directory)
+    {
+        root.metadata().addDirectory(directory);
+        root.put(Mp4Directory.class, directory);
     }
 }

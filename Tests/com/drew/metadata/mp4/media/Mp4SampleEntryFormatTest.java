@@ -20,10 +20,13 @@
  */
 package com.drew.metadata.mp4.media;
 
-import com.drew.lang.SequentialByteArrayReader;
 import com.drew.metadata.Metadata;
-import com.drew.metadata.mp4.Mp4Context;
+import com.drew.imaging.mp4.Mp4MetadataReader;
 import org.junit.Test;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
@@ -65,9 +68,7 @@ public class Mp4SampleEntryFormatTest
             0x00, 0x00                                      // pre-defined
         };
 
-        Metadata metadata = new Metadata();
-        new Mp4VideoHandler(metadata, new Mp4Context())
-            .processSampleDescription(new SequentialByteArrayReader(bytes));
+        Metadata metadata = readTrack("vide", bytes);
 
         Mp4VideoDirectory directory = metadata.getFirstDirectoryOfType(Mp4VideoDirectory.class);
         assertNotNull(directory);
@@ -92,12 +93,31 @@ public class Mp4SampleEntryFormatTest
             0x00, 0x00, (byte) 0xAC, 0x44                   // sample rate = 44100
         };
 
-        Metadata metadata = new Metadata();
-        new Mp4SoundHandler(metadata, new Mp4Context())
-            .processSampleDescription(new SequentialByteArrayReader(bytes));
+        Metadata metadata = readTrack("soun", bytes);
 
         Mp4SoundDirectory directory = metadata.getFirstDirectoryOfType(Mp4SoundDirectory.class);
         assertNotNull(directory);
         assertEquals("mp4a", directory.getString(Mp4SoundDirectory.TAG_AUDIO_FORMAT_RAW));
+    }
+
+    /** Reads a movie with one track of {@code handlerType} whose sample description payload is {@code stsd}. */
+    private static Metadata readTrack(String handlerType, byte[] stsd) throws Exception
+    {
+        byte[] hdlr = new byte[24];
+        System.arraycopy(handlerType.getBytes("ISO-8859-1"), 0, hdlr, 8, 4);
+        byte[] file = box("moov", box("trak", box("mdia", box("hdlr", hdlr), box("minf", box("stbl", box("stsd", stsd))))));
+        return Mp4MetadataReader.readMetadata(new ByteArrayInputStream(file));
+    }
+
+    private static byte[] box(String type, byte[]... parts) throws Exception
+    {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        int length = 8;
+        for (byte[] part : parts)
+            length += part.length;
+        bytes.write(ByteBuffer.allocate(8).putInt(length).put(type.getBytes("ISO-8859-1")).array());
+        for (byte[] part : parts)
+            bytes.write(part);
+        return bytes.toByteArray();
     }
 }

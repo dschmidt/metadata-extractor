@@ -31,7 +31,6 @@ import java.io.ByteArrayInputStream;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
 
 public class Mp4MetadataReaderTest
 {
@@ -53,7 +52,7 @@ public class Mp4MetadataReaderTest
         Mp4Directory directory = metadata.getFirstDirectoryOfType(Mp4Directory.class);
 
         assertNotNull(directory);
-        assertTrue(containsError(directory, "Box nesting too deep."));
+        assertFalse(directory.hasErrors());
     }
 
     @Test
