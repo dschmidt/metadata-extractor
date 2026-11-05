@@ -282,6 +282,17 @@ public class IsoSamplesTest
         assertTrue(errors.toString(), errors.toString().contains("follows a damaged track fragment"));
     }
 
+    @Test
+    public void testFragmentWithoutHeaderIsReportedOnce() throws Exception
+    {
+        byte[] moov = box("moov", textTrak(2, null), box("mvex", box("trex", new byte[4], int32(2), int32(1), int32(1000), int32(2), int32(0))));
+        byte[] trun = box("trun", new byte[4], int32(1));
+        byte[] file = join(moov, moof(box("traf", trun, trun)), box("mdat", ascii("xx")));
+        List<String> errors = new ArrayList<String>();
+        read(file, new TextRecorder(), errors);
+        assertEquals(Collections.singletonList("Track fragment without a 'tfhd' before its runs; its data cannot be placed"), errors);
+    }
+
     private static byte[] moof(byte[] trafs)
     {
         return box("moof", box("mfhd", new byte[4], int32(1)), trafs);

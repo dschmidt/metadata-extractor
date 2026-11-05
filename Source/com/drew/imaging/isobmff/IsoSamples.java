@@ -587,6 +587,8 @@ public final class IsoSamples
         if (moof == null)
             return;
         Movie movie = movie(moof);
+        Fragment unlocated = new Fragment();
+        traf.put(Fragment.class, unlocated);
         long fields = ((flags & 0x01) != 0 ? 8 : 0) + ((flags & 0x02) != 0 ? 4 : 0)
             + ((flags & 0x08) != 0 ? 4 : 0) + ((flags & 0x10) != 0 ? 4 : 0) + ((flags & 0x20) != 0 ? 4 : 0);
         if (remaining(box) < 4) {
@@ -638,6 +640,8 @@ public final class IsoSamples
         Fragment fragment = traf.get(Fragment.class);
         if (fragment == null) {
             movie.located = false;
+            traf.put(Fragment.class, new Fragment());
+            traf.addError("Track fragment without a 'tfhd' before its runs; its data cannot be placed");
             return;
         }
         Track track = fragment.track;
