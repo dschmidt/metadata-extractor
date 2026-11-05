@@ -15,7 +15,7 @@
  *
  * More information about this project is available at:
  *
- *    https://drewnoakes.com/code/exif/
+ *    https://github.com/drewnoakes/metadata-extractor/
  *    https://github.com/drewnoakes/metadata-extractor
  */
 package com.drew.imaging.isobmff;
@@ -25,26 +25,30 @@ import com.drew.lang.annotations.NotNull;
 import com.drew.lang.annotations.Nullable;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Samples of the tracks in {@code moov} (ISO/IEC 14496-12, 8.7) and of track fragments in
  * {@code moof} (8.8): the sample tables or track runs locate each sample's data by input
- * position, usually in {@code mdat}. Timed metadata such as GPS tracks, Apple's {@code mebx} or
- * Canon's {@code CTMD} lives in samples.
+ * position, usually in {@code mdat}, and give its decoding time. Timed metadata such as
+ * subtitles, GPS tracks, Apple's {@code mebx} or Canon's {@code CTMD} lives in samples.
  * <p>
- * {@link #readers} reads the handler, sample description and sample tables of each track, and
- * the track runs of each fragment, and asks the walk for the samples of the tracks a
- * {@link SampleReader} accepts (see {@link IsoBoxContext#requestRange}).
+ * {@link #readers} reads the tracks and their sample tables, and the track runs of each
+ * fragment, and once {@code moov} is read asks the walk for the samples of the tracks a
+ * {@link SampleReader} accepts (see {@link IsoBoxContext#requestRange}). Edit lists are not
+ * applied.
  */
 public final class IsoSamples
 {
     private IsoSamples() {}
 
-    /** A track, as far as its boxes say before its samples are read. */
+    /** A track, as far as its boxes say. */
     public static final class Track
     {
         @Nullable
@@ -53,17 +57,41 @@ public final class IsoSamples
         String format;
         int index;
         long id;
+        long timescale;
+        int languageCode = -1;
+        @Nullable
+        Set<String> referencedAs;
+        @Nullable
+        Map<String, long[]> references;
+
+        /** Whether the reader accepted the track when its sample description was read; null before that. */
+        @Nullable
+        Boolean wanted;
+        boolean accepted;
+        boolean lost;
+        @Nullable
+        long[] chunkOffsets;
+        @Nullable
+        SampleSizes sampleSizes;
+        @Nullable
+        long[] chunkRuns;
+        @Nullable
+        long[] timeRuns;
+        long defaultSampleDuration;
+        long defaultSampleSize;
+        int samples;
+        long time;
 
         Track() {}
 
-        /** The handler type from {@code mdia/hdlr}, such as {@code vide}, {@code soun} or {@code meta}. */
+        /** The handler type from {@code mdia/hdlr}, such as {@code vide}, {@code soun}, {@code text} or {@code meta}. */
         @Nullable
         public String getHandlerType()
         {
             return handlerType;
         }
 
-        /** The format of the first sample description, such as {@code avc1}, {@code mebx} or {@code CTMD}. */
+        /** The format of the first sample description, such as {@code avc1}, {@code tx3g}, {@code mebx} or {@code CTMD}. */
         @Nullable
         public String getFormat()
         {
@@ -82,32 +110,128 @@ public final class IsoSamples
             return id;
         }
 
-        @Nullable
-        long[] chunkOffsets;
-        @Nullable
-        long[] sampleSizes;
-        @Nullable
-        long[] chunkRuns;
-        /** The default sample size of fragments, from {@code trex}. */
-        long defaultSampleSize;
-        int samples;
+        /** The time scale from {@code mdia/mdhd}: the units of a second in which the samples' times are given. */
+        public long getTimescale()
+        {
+            return timescale;
+        }
+
+        /**
+         * The language from {@code mdia/mdhd} as stored: three 5-bit letters of ISO 639-2/T
+         * (0x55C4 is {@code und}), or a QuickTime Macintosh language code below 0x400; -1 if
+         * not read.
+         */
+        public int getLanguageCode()
+        {
+            return languageCode;
+        }
+
+        /**
+         * Whether another track refers to this one with a {@code tref} reference of
+         * {@code type}, such as {@code chap} for a QuickTime chapter track. Known once
+         * {@code moov} is read.
+         */
+        public boolean isReferencedAs(@NotNull String type)
+        {
+            return referencedAs != null && referencedAs.contains(type);
+        }
+    }
+
+    /** One sample of a track. */
+    public static final class Sample
+    {
+        private final int _index;
+        private final long _time;
+        private final long _duration;
+        private final long _offset;
+        private final long _size;
+
+        Sample(int index, long time, long duration, long offset, long size)
+        {
+            _index = index;
+            _time = time;
+            _duration = duration;
+            _offset = offset;
+            _size = size;
+        }
+
+        /** The sample's number in its track, from 0, over the sample tables and then the fragments. */
+        public int getIndex()
+        {
+            return _index;
+        }
+
+        /** The decoding time, in the track's time scale. */
+        public long getTime()
+        {
+            return _time;
+        }
+
+        /** The duration, in the track's time scale. */
+        public long getDuration()
+        {
+            return _duration;
+        }
+
+        /** The position of the sample's data in the input. */
+        public long getOffset()
+        {
+            return _offset;
+        }
+
+        /** The size of the sample's data. */
+        public long getSize()
+        {
+            return _size;
+        }
     }
 
     /** Reads the samples of the tracks it accepts. */
     public interface SampleReader
     {
-        /** Whether to read the samples of {@code track}; only accepted tracks are read from the input. */
+        /**
+         * Whether to read the samples of {@code track}. Called once the track's sample
+         * description is read, to decide whether to keep its sample tables, and again once
+         * {@code moov} is read, when {@link Track#isReferencedAs} is known; samples are read
+         * only for a track accepted both times.
+         */
         boolean accepts(@NotNull Track track);
 
-        /** Reads sample {@code index} of {@code track}, counted over the whole file; {@code file} is the file context. */
-        void readSample(@NotNull IsoBoxContext file, @NotNull Track track, int index, @NotNull SequentialReader data) throws IOException;
+        /**
+         * Reads a sample, as the walk passes it: in input order, which is not always the order
+         * of {@link Sample#getIndex()}. {@code file} is the file context.
+         */
+        void readSample(@NotNull IsoBoxContext file, @NotNull Track track, @NotNull Sample sample, @NotNull SequentialReader data)
+            throws IOException;
     }
 
-    /** The tracks of the file by ID, on the file context. */
+    /** Sizes from {@code stsz}, one for all samples or one each, or from {@code stz2}. */
+    static final class SampleSizes
+    {
+        final int count;
+        private final long _fixed;
+        @Nullable
+        private final long[] _sizes;
+
+        SampleSizes(int count, long fixed, @Nullable long[] sizes)
+        {
+            this.count = count;
+            _fixed = fixed;
+            _sizes = sizes;
+        }
+
+        long get(int index)
+        {
+            return _sizes == null ? _fixed : _sizes[index];
+        }
+    }
+
+    /** The tracks of the file, on the file context. */
     private static final class Tracks
     {
+        final List<Track> all = new ArrayList<Track>();
         final Map<Long, Track> byId = new HashMap<Long, Track>();
-        int count;
+        boolean requested;
     }
 
     /** Where the samples of a track fragment are, from {@code tfhd}; on the {@code traf} context. */
@@ -115,24 +239,30 @@ public final class IsoSamples
     {
         @Nullable
         Track track;
-        long nextDataOffset;
+        boolean located;
+        long base;
+        long next;
+        long defaultSampleDuration;
         long defaultSampleSize;
     }
 
-    /** Where the data of the next track fragment of a {@code moof} starts, on the {@code moof} context. */
+    /** Where the data of the next track fragment of a {@code moof} starts; on the {@code moof} context. */
     private static final class Movie
     {
         long nextDataOffset;
+        boolean located = true;
     }
 
-    private static final String STBL = "moov/trak/mdia/minf/stbl/";
+    private static final String TRAK = "moov/trak/";
+    private static final String STBL = TRAK + "mdia/minf/stbl/";
 
     /** The readers for the tracks and fragments of the file; at most {@code maxSamples} samples are read per track. */
     @NotNull
     public static IsoBoxReader readers(@NotNull final SampleReader reader, final int maxSamples)
     {
-        final List<String> paths = Arrays.asList("moov/trak/tkhd", "moov/trak/mdia/hdlr", STBL + "stsd", STBL + "stsc",
-            STBL + "stsz", STBL + "stz2", STBL + "stco", STBL + "co64", "moov/mvex/trex", "moof/traf/tfhd", "moof/traf/trun");
+        final List<String> paths = Arrays.asList(TRAK + "tkhd", TRAK + "tref/*", TRAK + "mdia/mdhd", TRAK + "mdia/hdlr",
+            STBL + "stsd", STBL + "stts", STBL + "stsc", STBL + "stsz", STBL + "stz2", STBL + "stco", STBL + "co64",
+            "moov/mvex/trex", "moof/traf/tfhd", "moof/traf/tfdt", "moof/traf/trun");
         return new IsoBoxReader()
         {
             @NotNull
@@ -146,114 +276,278 @@ public final class IsoSamples
             public void readBox(@NotNull IsoBoxContext box) throws IOException
             {
                 SequentialReader payload = box.payload();
+                Tracks tracks = tracks(box, reader, maxSamples);
+                if (box.parent().box().type.equals("tref")) {
+                    readReference(box, payload, tracks, maxSamples);
+                    return;
+                }
                 int version = payload.getUInt8();
                 int flags = payload.getUInt16() << 8 | payload.getUInt8();
                 String type = box.box().type;
-                Tracks tracks = tracks(box);
                 if (type.equals("trex")) {
                     Track track = tracks.byId.get(payload.getUInt32());
                     if (track != null) {
-                        payload.skip(8);
+                        payload.skip(4);
+                        track.defaultSampleDuration = payload.getUInt32();
                         track.defaultSampleSize = payload.getUInt32();
                     }
-                    return;
-                }
-                if (type.equals("tfhd")) {
+                } else if (type.equals("tfhd")) {
                     readFragmentHeader(box, payload, flags, tracks);
-                    return;
-                }
-                if (type.equals("trun")) {
-                    readTrackRun(box, payload, version, flags, reader, maxSamples);
-                    return;
-                }
-                IsoBoxContext trak = box.ancestor("trak");
-                if (trak == null)
-                    return;
-                Track track = trak.get(Track.class);
-                if (track == null) {
-                    final Track created = new Track();
-                    created.index = tracks.count++;
-                    trak.put(Track.class, created);
-                    trak.whenDone(new IsoBoxReaders.Callback()
-                    {
-                        @Override
-                        public void read(@NotNull IsoBoxContext done)
-                        {
-                            request(done, created, reader);
-                        }
-                    });
-                    track = created;
-                }
-                if (type.equals("tkhd")) {
-                    payload.skip(version == 1 ? 16 : 8);
-                    track.id = payload.getUInt32();
-                    tracks.byId.put(track.id, track);
-                } else if (type.equals("hdlr")) {
-                    payload.skip(4);
-                    track.handlerType = payload.getString(4);
-                } else if (type.equals("stsd")) {
-                    if (payload.getUInt32() > 0) {
-                        payload.skip(4);
-                        track.format = payload.getString(4);
+                } else if (type.equals("tfdt")) {
+                    Fragment fragment = box.parent().get(Fragment.class);
+                    if (fragment == null || fragment.track == null)
+                        return;
+                    if (remaining(box) < (version == 1 ? 8 : 4)) {
+                        fragment.track.lost = true;
+                        throw new IOException("Shorter than its version declares");
                     }
-                } else if (!reader.accepts(track)) {
-                    return;
-                } else if (type.equals("stsz")) {
-                    long size = payload.getUInt32();
-                    int count = (int) Math.min(payload.getUInt32(), maxSamples);
-                    long[] sizes = new long[count];
-                    for (int i = 0; i < count; i++)
-                        sizes[i] = size != 0 ? size : payload.getUInt32();
-                    track.sampleSizes = sizes;
-                } else if (type.equals("stz2")) {
-                    payload.skip(3);
-                    int fieldSize = payload.getUInt8();
-                    if (fieldSize != 4 && fieldSize != 8 && fieldSize != 16)
-                        throw new IOException("Invalid field size " + fieldSize + " in 'stz2'");
-                    int count = (int) Math.min(payload.getUInt32(), maxSamples);
-                    long[] sizes = new long[count];
-                    for (int i = 0; i < count; i++) {
-                        if (fieldSize == 16) {
-                            sizes[i] = payload.getUInt16();
-                        } else if (fieldSize == 8) {
-                            sizes[i] = payload.getUInt8();
-                        } else {
-                            int pair = payload.getUInt8();
-                            sizes[i] = pair >> 4;
-                            if (++i < count)
-                                sizes[i] = pair & 0x0F;
-                        }
-                    }
-                    track.sampleSizes = sizes;
-                } else if (type.equals("stsc")) {
-                    int count = (int) Math.min(payload.getUInt32(), maxSamples);
-                    long[] runs = new long[count * 2];
-                    for (int i = 0; i < count; i++) {
-                        runs[i * 2] = payload.getUInt32();
-                        runs[i * 2 + 1] = payload.getUInt32();
-                        payload.skip(4);
-                    }
-                    track.chunkRuns = runs;
+                    fragment.track.time = version == 1 ? payload.getInt64() : payload.getUInt32();
+                } else if (type.equals("trun")) {
+                    readTrackRun(box, payload, flags, reader, maxSamples);
                 } else {
-                    int count = (int) Math.min(payload.getUInt32(), maxSamples);
-                    long[] offsets = new long[count];
-                    for (int i = 0; i < count; i++)
-                        offsets[i] = type.equals("co64") ? payload.getInt64() : payload.getUInt32();
-                    track.chunkOffsets = offsets;
+                    readTrackBox(box, payload, version, type, tracks, reader, maxSamples);
                 }
             }
         };
     }
 
+    /** The tracks of the file, created with the first track box, when the samples are also scheduled for when {@code moov} is read. */
     @NotNull
-    private static Tracks tracks(@NotNull IsoBoxContext box)
+    private static Tracks tracks(@NotNull IsoBoxContext box, @NotNull final SampleReader reader, final int maxSamples)
     {
         Tracks tracks = box.root().get(Tracks.class);
         if (tracks == null) {
-            tracks = new Tracks();
-            box.root().put(Tracks.class, tracks);
+            final Tracks created = new Tracks();
+            box.root().put(Tracks.class, created);
+            IsoBoxContext moov = box.ancestor("moov");
+            if (moov != null) {
+                moov.whenDone(new IsoBoxReaders.Callback()
+                {
+                    @Override
+                    public void read(@NotNull IsoBoxContext done)
+                    {
+                        requestTables(done, created, reader);
+                    }
+                });
+            }
+            tracks = created;
         }
         return tracks;
+    }
+
+    /** The track {@code box} belongs to, created with the first of its boxes. */
+    @NotNull
+    private static Track track(@NotNull IsoBoxContext trak, @NotNull Tracks tracks)
+    {
+        Track track = trak.get(Track.class);
+        if (track == null) {
+            track = new Track();
+            track.index = tracks.all.size();
+            tracks.all.add(track);
+            trak.put(Track.class, track);
+        }
+        return track;
+    }
+
+    /** A {@code tref} entry: the IDs of the tracks this one refers to, by reference type. */
+    private static void readReference(@NotNull IsoBoxContext box, @NotNull SequentialReader payload, @NotNull Tracks tracks,
+                                      int maxSamples) throws IOException
+    {
+        IsoBoxContext trak = box.ancestor("trak");
+        if (trak == null)
+            return;
+        Track track = track(trak, tracks);
+        int count = (int) Math.min(remaining(box) / 4, maxSamples);
+        long[] ids = new long[count];
+        for (int i = 0; i < count; i++)
+            ids[i] = payload.getUInt32();
+        if (track.references == null)
+            track.references = new HashMap<String, long[]>();
+        track.references.put(box.box().type, ids);
+    }
+
+    private static void readTrackBox(@NotNull IsoBoxContext box, @NotNull SequentialReader payload, int version, @NotNull String type,
+                                     @NotNull Tracks tracks, @NotNull SampleReader reader, int maxSamples) throws IOException
+    {
+        IsoBoxContext trak = box.ancestor("trak");
+        if (trak == null)
+            return;
+        Track track = track(trak, tracks);
+        if (type.equals("tkhd")) {
+            payload.skip(version == 1 ? 16 : 8);
+            track.id = payload.getUInt32();
+            tracks.byId.put(track.id, track);
+        } else if (type.equals("mdhd")) {
+            payload.skip(version == 1 ? 16 : 8);
+            track.timescale = payload.getUInt32();
+            payload.skip(version == 1 ? 8 : 4);
+            track.languageCode = payload.getUInt16();
+        } else if (type.equals("hdlr")) {
+            payload.skip(4);
+            track.handlerType = payload.getString(4);
+        } else if (type.equals("stsd")) {
+            if (payload.getUInt32() > 0) {
+                payload.skip(4);
+                track.format = payload.getString(4);
+            }
+            track.wanted = reader.accepts(track);
+        } else if (!Boolean.FALSE.equals(track.wanted)) {
+            readTable(box, payload, type, track, maxSamples);
+        }
+    }
+
+    private static void readTable(@NotNull IsoBoxContext box, @NotNull SequentialReader payload, @NotNull String type,
+                                  @NotNull Track track, int maxSamples) throws IOException
+    {
+        if (type.equals("stsz")) {
+            long size = payload.getUInt32();
+            long declared = payload.getUInt32();
+            if (size != 0) {
+                track.sampleSizes = new SampleSizes((int) Math.min(declared, maxSamples), size, null);
+                return;
+            }
+            int count = (int) Math.min(Math.min(declared, maxSamples), remaining(box) / 4);
+            long[] sizes = new long[count];
+            for (int i = 0; i < count; i++)
+                sizes[i] = payload.getUInt32();
+            track.sampleSizes = new SampleSizes(count, 0, sizes);
+        } else if (type.equals("stz2")) {
+            payload.skip(3);
+            int fieldSize = payload.getUInt8();
+            if (fieldSize != 4 && fieldSize != 8 && fieldSize != 16)
+                throw new IOException("Invalid field size " + fieldSize);
+            long declared = payload.getUInt32();
+            int count = (int) Math.min(Math.min(declared, maxSamples), remaining(box) * 8 / fieldSize);
+            long[] sizes = new long[count];
+            for (int i = 0; i < count; i++) {
+                if (fieldSize == 16) {
+                    sizes[i] = payload.getUInt16();
+                } else if (fieldSize == 8) {
+                    sizes[i] = payload.getUInt8();
+                } else {
+                    int pair = payload.getUInt8();
+                    sizes[i] = pair >> 4;
+                    if (++i < count)
+                        sizes[i] = pair & 0x0F;
+                }
+            }
+            track.sampleSizes = new SampleSizes(count, 0, sizes);
+        } else if (type.equals("stsc")) {
+            track.chunkRuns = pairs(box, payload, 12, maxSamples);
+        } else if (type.equals("stts")) {
+            track.timeRuns = pairs(box, payload, 8, maxSamples);
+        } else {
+            boolean wide = type.equals("co64");
+            int count = (int) Math.min(Math.min(payload.getUInt32(), maxSamples), remaining(box) / (wide ? 8 : 4));
+            long[] offsets = new long[count];
+            for (int i = 0; i < count; i++)
+                offsets[i] = wide ? payload.getInt64() : payload.getUInt32();
+            track.chunkOffsets = offsets;
+        }
+    }
+
+    /** The first two 32-bit fields of each entry of {@code stsc} or {@code stts}. */
+    @NotNull
+    private static long[] pairs(@NotNull IsoBoxContext box, @NotNull SequentialReader payload, int entrySize, int maxSamples) throws IOException
+    {
+        int count = (int) Math.min(Math.min(payload.getUInt32(), maxSamples), remaining(box) / entrySize);
+        long[] pairs = new long[count * 2];
+        for (int i = 0; i < count; i++) {
+            pairs[i * 2] = payload.getUInt32();
+            pairs[i * 2 + 1] = payload.getUInt32();
+            payload.skip(entrySize - 8);
+        }
+        return pairs;
+    }
+
+    /** The bytes of {@code box}'s payload not read yet. */
+    private static long remaining(@NotNull IsoBoxContext box) throws IOException
+    {
+        long size = box.box().payloadSize;
+        return size == -1 ? Long.MAX_VALUE : Math.max(0, size - box.payload().getPosition());
+    }
+
+    /** Once {@code moov} is read: decides on each track and asks for the samples its tables locate. */
+    private static void requestTables(@NotNull IsoBoxContext moov, @NotNull Tracks tracks, @NotNull SampleReader reader)
+    {
+        if (tracks.requested)
+            return;
+        tracks.requested = true;
+        for (Track track : tracks.all) {
+            if (track.references == null)
+                continue;
+            for (Map.Entry<String, long[]> reference : track.references.entrySet()) {
+                for (long id : reference.getValue()) {
+                    Track target = tracks.byId.get(id);
+                    if (target == null)
+                        continue;
+                    if (target.referencedAs == null)
+                        target.referencedAs = new HashSet<String>(1);
+                    target.referencedAs.add(reference.getKey());
+                }
+            }
+        }
+        for (Track track : tracks.all) {
+            track.accepted = !Boolean.FALSE.equals(track.wanted) && reader.accepts(track);
+            if (track.accepted)
+                requestTable(moov, track, reader);
+            track.chunkOffsets = null;
+            track.sampleSizes = null;
+            track.chunkRuns = null;
+            track.timeRuns = null;
+        }
+    }
+
+    /** Asks for the samples the sample tables of {@code track} locate, in order. */
+    private static void requestTable(@NotNull IsoBoxContext box, @NotNull Track track, @NotNull SampleReader reader)
+    {
+        long[] offsets = track.chunkOffsets;
+        SampleSizes sizes = track.sampleSizes;
+        long[] runs = track.chunkRuns;
+        long[] times = track.timeRuns;
+        if (offsets == null || sizes == null || runs == null)
+            return;
+        int entries = runs.length / 2;
+        long nextChunk = 1;
+        int timeRun = 0;
+        long timeLeft = 0;
+        long delta = 0;
+        for (int entry = 0; entry < entries && track.samples < sizes.count; entry++) {
+            long firstChunk = runs[entry * 2];
+            long perChunk = runs[entry * 2 + 1];
+            long nextFirst = entry + 1 < entries ? runs[(entry + 1) * 2] : offsets.length + 1L;
+            for (long chunk = Math.max(firstChunk, nextChunk); chunk < nextFirst && chunk <= offsets.length && track.samples < sizes.count; chunk++) {
+                nextChunk = chunk + 1;
+                long offset = offsets[(int) (chunk - 1)];
+                for (long i = 0; i < perChunk && track.samples < sizes.count; i++) {
+                    while (timeLeft == 0 && times != null && timeRun < times.length / 2) {
+                        timeLeft = times[timeRun * 2];
+                        delta = times[timeRun * 2 + 1];
+                        timeRun++;
+                    }
+                    long duration = timeLeft > 0 ? delta : 0;
+                    if (timeLeft > 0)
+                        timeLeft--;
+                    long size = sizes.get(track.samples);
+                    request(box, track, new Sample(track.samples++, track.time, duration, offset, size), reader);
+                    track.time += duration;
+                    offset += size;
+                }
+            }
+        }
+    }
+
+    /** Where the data of the next track fragment of {@code moof} starts. */
+    @NotNull
+    private static Movie movie(@NotNull IsoBoxContext moof)
+    {
+        Movie movie = moof.get(Movie.class);
+        if (movie == null) {
+            movie = new Movie();
+            movie.nextDataOffset = moof.box().offset;
+            moof.put(Movie.class, movie);
+        }
+        return movie;
     }
 
     private static void readFragmentHeader(@NotNull IsoBoxContext box, @NotNull SequentialReader payload, int flags,
@@ -261,95 +555,111 @@ public final class IsoSamples
     {
         IsoBoxContext traf = box.parent();
         IsoBoxContext moof = box.ancestor("moof");
-        if (traf == null || moof == null)
+        if (moof == null)
             return;
-        Movie movie = moof.get(Movie.class);
-        if (movie == null) {
-            movie = new Movie();
-            movie.nextDataOffset = moof.box().offset;
-            moof.put(Movie.class, movie);
+        Movie movie = movie(moof);
+        long fields = ((flags & 0x01) != 0 ? 8 : 0) + ((flags & 0x02) != 0 ? 4 : 0)
+            + ((flags & 0x08) != 0 ? 4 : 0) + ((flags & 0x10) != 0 ? 4 : 0) + ((flags & 0x20) != 0 ? 4 : 0);
+        if (remaining(box) < 4) {
+            movie.located = false;
+            throw new IOException("No track ID");
+        }
+        Track known = tracks.byId.get(payload.getUInt32());
+        Track track = known != null && known.accepted && !known.lost ? known : null;
+        if (remaining(box) < fields) {
+            movie.located = false;
+            if (track != null)
+                track.lost = true;
+            throw new IOException("Shorter than its flags declare");
         }
         Fragment fragment = new Fragment();
-        fragment.track = tracks.byId.get(payload.getUInt32());
-        // without an explicit base, the first fragment starts at the moof box and later ones after the data before them
-        fragment.nextDataOffset = (flags & 0x020000) != 0 ? moof.box().offset : movie.nextDataOffset;
-        if ((flags & 0x000001) != 0)
-            fragment.nextDataOffset = payload.getInt64();
-        if ((flags & 0x000002) != 0)
+        if ((flags & 0x01) != 0) {
+            fragment.base = payload.getInt64();
+            fragment.located = true;
+        } else if ((flags & 0x020000) != 0) {
+            fragment.base = moof.box().offset;
+            fragment.located = true;
+        } else {
+            fragment.base = movie.nextDataOffset;
+            fragment.located = movie.located;
+        }
+        if ((flags & 0x02) != 0)
             payload.skip(4);
-        if ((flags & 0x000008) != 0)
-            payload.skip(4);
-        fragment.defaultSampleSize = (flags & 0x000010) != 0 ? payload.getUInt32()
-            : fragment.track == null ? 0 : fragment.track.defaultSampleSize;
+        fragment.defaultSampleDuration = (flags & 0x08) != 0 ? payload.getUInt32() : known == null ? 0 : known.defaultSampleDuration;
+        fragment.defaultSampleSize = (flags & 0x10) != 0 ? payload.getUInt32() : known == null ? 0 : known.defaultSampleSize;
+        fragment.next = fragment.base;
+        movie.located = fragment.located;
+        movie.nextDataOffset = fragment.base;
+        if (!fragment.located && track != null) {
+            box.addError("Fragment data of track " + track.id + " follows a damaged track fragment; skipped");
+            track = null;
+        }
+        fragment.track = track;
         traf.put(Fragment.class, fragment);
     }
 
-    private static void readTrackRun(@NotNull IsoBoxContext box, @NotNull SequentialReader payload, int version, int flags,
-                                     @NotNull final SampleReader reader, int maxSamples) throws IOException
+    private static void readTrackRun(@NotNull IsoBoxContext box, @NotNull SequentialReader payload, int flags,
+                                     @NotNull SampleReader reader, int maxSamples) throws IOException
     {
         IsoBoxContext traf = box.parent();
         IsoBoxContext moof = box.ancestor("moof");
-        Fragment fragment = traf == null ? null : traf.get(Fragment.class);
-        if (fragment == null || moof == null)
+        if (traf == null || moof == null)
             return;
-        Movie movie = moof.get(Movie.class);
+        Movie movie = movie(moof);
+        Fragment fragment = traf.get(Fragment.class);
+        if (fragment == null) {
+            movie.located = false;
+            return;
+        }
+        Track track = fragment.track;
         long count = payload.getUInt32();
-        long offset = fragment.nextDataOffset;
-        if ((flags & 0x000001) != 0)
-            offset = moof.box().offset + payload.getInt32();
-        if ((flags & 0x000004) != 0)
+        int width = 4 * Integer.bitCount(flags & 0xF00);
+        long fields = ((flags & 0x01) != 0 ? 4 : 0) + ((flags & 0x04) != 0 ? 4 : 0);
+        if (remaining(box) < fields || (width > 0 && (remaining(box) - fields) / width < count)) {
+            movie.located = false;
+            if (track != null)
+                track.lost = true;
+            throw new IOException("Shorter than its sample count declares");
+        }
+        long offset = (flags & 0x01) != 0 ? fragment.base + payload.getInt32() : fragment.next;
+        if ((flags & 0x04) != 0)
             payload.skip(4);
-        final Track track = fragment.track;
-        boolean accepted = track != null && reader.accepts(track);
-        for (long i = 0; i < count; i++) {
-            if ((flags & 0x000100) != 0)
+        long i = 0;
+        for (; i < count; i++) {
+            if (width == 0 && (track == null || track.lost || track.samples >= maxSamples))
+                break;
+            long duration = (flags & 0x100) != 0 ? payload.getUInt32() : fragment.defaultSampleDuration;
+            long size = (flags & 0x200) != 0 ? payload.getUInt32() : fragment.defaultSampleSize;
+            if ((flags & 0x400) != 0)
                 payload.skip(4);
-            long size = (flags & 0x000200) != 0 ? payload.getUInt32() : fragment.defaultSampleSize;
-            if ((flags & 0x000400) != 0)
+            if ((flags & 0x800) != 0)
                 payload.skip(4);
-            if ((flags & 0x000800) != 0)
-                payload.skip(4);
-            if (accepted && track.samples < maxSamples)
-                requestSample(box, track, track.samples++, offset, size, reader);
+            if (track != null && !track.lost && track.samples < maxSamples) {
+                request(box, track, new Sample(track.samples++, track.time, duration, offset, size), reader);
+                track.time += duration;
+            }
             offset += size;
         }
-        fragment.nextDataOffset = offset;
-        if (movie != null)
-            movie.nextDataOffset = offset;
-    }
-
-    /** Asks for the samples of {@code track} once its {@code trak} is read. */
-    private static void request(@NotNull IsoBoxContext box, @NotNull Track track, @NotNull SampleReader reader)
-    {
-        long[] offsets = track.chunkOffsets;
-        long[] sizes = track.sampleSizes;
-        long[] runs = track.chunkRuns;
-        if (offsets == null || sizes == null || runs == null || runs.length == 0)
-            return;
-        for (int chunk = 0; chunk < offsets.length && track.samples < sizes.length; chunk++) {
-            long perChunk = 0;
-            for (int run = 0; run < runs.length; run += 2) {
-                if (runs[run] - 1 <= chunk)
-                    perChunk = runs[run + 1];
-            }
-            long offset = offsets[chunk];
-            for (long i = 0; i < perChunk && track.samples < sizes.length; i++) {
-                long size = sizes[track.samples];
-                requestSample(box, track, track.samples++, offset, size, reader);
-                offset += size;
-            }
+        if (i < count) {
+            long size = fragment.defaultSampleSize;
+            long rest = count - i;
+            offset = size > 0 && rest > (Long.MAX_VALUE - Math.max(offset, 0)) / size ? Long.MAX_VALUE : offset + rest * size;
         }
+        fragment.next = offset;
+        movie.nextDataOffset = offset;
+        movie.located = fragment.located;
     }
 
-    private static void requestSample(@NotNull IsoBoxContext box, @NotNull final Track track, final int index, long offset, long size,
-                                      @NotNull final SampleReader reader)
+    private static void request(@NotNull IsoBoxContext box, @NotNull final Track track, @NotNull final Sample sample,
+                                @NotNull final SampleReader reader)
     {
-        box.requestRange(offset, size, new IsoBoxContext.RangeReader()
+        box.requestRange(sample.getOffset(), sample.getSize(), new IsoBoxContext.RangeReader()
         {
             @Override
             public void read(@NotNull IsoBoxContext data, @NotNull SequentialReader bytes) throws IOException
             {
-                reader.readSample(data.root(), track, index, bytes);
+                if (!track.lost)
+                    reader.readSample(data.root(), track, sample, bytes);
             }
         });
     }

@@ -60,9 +60,31 @@ public class IsoSamplesTest
         }
 
         @Override
-        public void readSample(@NotNull IsoBoxContext file, @NotNull IsoSamples.Track track, int index, @NotNull SequentialReader data) throws IOException
+        public void readSample(@NotNull IsoBoxContext file, @NotNull IsoSamples.Track track, @NotNull IsoSamples.Sample sample, @NotNull SequentialReader data) throws IOException
         {
-            samples.add(track.getIndex() + ":" + index + "=" + data.getString((int) data.available()));
+            samples.add(track.getIndex() + ":" + sample.getIndex() + "=" + data.getString((int) sample.getSize()));
+        }
+    }
+
+    /** Reads the text tracks that are not chapter tracks, with each sample's time. */
+    private static final class TextRecorder implements IsoSamples.SampleReader
+    {
+        final List<String> samples = new ArrayList<String>();
+        final List<String> tracks = new ArrayList<String>();
+
+        @Override
+        public boolean accepts(@NotNull IsoSamples.Track track)
+        {
+            return "text".equals(track.getHandlerType()) && "tx3g".equals(track.getFormat()) && !track.isReferencedAs("chap");
+        }
+
+        @Override
+        public void readSample(@NotNull IsoBoxContext file, @NotNull IsoSamples.Track track, @NotNull IsoSamples.Sample sample, @NotNull SequentialReader data) throws IOException
+        {
+            String track_ = track.getId() + "/" + track.getTimescale() + "/" + Integer.toHexString(track.getLanguageCode());
+            if (!tracks.contains(track_))
+                tracks.add(track_);
+            samples.add(track.getId() + ":" + sample.getIndex() + "@" + sample.getTime() + "+" + sample.getDuration() + "=" + data.getString((int) sample.getSize()));
         }
     }
 
@@ -143,6 +165,137 @@ public class IsoSamplesTest
         byte[] moov = box("moov", trak("meta", "mebx", stsc(), stz2, stco(start, start + 9)));
         read(join(moov, box("mdat", ascii("aabbbXXXXc"))), recorder, new ArrayList<String>());
         assertEquals(Arrays.asList("0:0=aa", "0:1=bbb", "0:2=c"), recorder.samples);
+    }
+
+    private static final int ENG = (5 << 10) | (14 << 5) | 7;
+
+    @Test
+    public void testTimesComeFromTheTimeToSampleTable() throws Exception
+    {
+        byte[] data = ascii("aabbbc");
+        byte[] stts = box("stts", new byte[4], int32(2), int32(2), int32(500), int32(1), int32(2000));
+        byte[] stsc = box("stsc", new byte[4], int32(1), int32(1), int32(3), int32(1));
+        byte[] stsz = box("stsz", new byte[4], int32(0), int32(3), int32(2), int32(3), int32(1));
+        byte[] probe = box("moov", textTrak(3, null, stts, stsc, stsz, stco(0)));
+        byte[] file = join(box("moov", textTrak(3, null, stts, stsc, stsz, stco(probe.length + 8))), box("mdat", data));
+        TextRecorder recorder = new TextRecorder();
+        List<String> errors = new ArrayList<String>();
+        read(file, recorder, errors);
+        assertEquals(Arrays.asList("3:0@0+500=aa", "3:1@500+500=bbb", "3:2@1000+2000=c"), recorder.samples);
+        assertEquals(Collections.singletonList("3/1000/" + Integer.toHexString(ENG)), recorder.tracks);
+        assertTrue(errors.toString(), errors.isEmpty());
+    }
+
+    @Test
+    public void testReferencesFromLaterTracksAreKnownBeforeSamplesAreRead() throws Exception
+    {
+        byte[] stts = box("stts", new byte[4], int32(1), int32(1), int32(1000));
+        byte[] stsc = box("stsc", new byte[4], int32(1), int32(1), int32(1), int32(1));
+        byte[] stsz = box("stsz", new byte[4], int32(2), int32(1));
+        // track 2 holds chapter titles, as track 3 says after it; track 4 is a subtitle track
+        byte[] video = box("trak", box("tkhd", new byte[12], int32(3), new byte[4]), box("tref", box("chap", int32(2))),
+            box("mdia", box("mdhd", new byte[12], int32(1000), int32(0), new byte[4]), box("hdlr", new byte[8], ascii("vide"), new byte[13])));
+        byte[] probe = box("moov", textTrak(2, null, stts, stsc, stsz, stco(0)), video, textTrak(4, null, stts, stsc, stsz, stco(0)));
+        int data = probe.length + 8;
+        byte[] file = join(box("moov", textTrak(2, null, stts, stsc, stsz, stco(data)), video, textTrak(4, null, stts, stsc, stsz, stco(data + 2))),
+            box("mdat", ascii("chsu")));
+        TextRecorder recorder = new TextRecorder();
+        read(file, recorder, new ArrayList<String>());
+        assertEquals(Collections.singletonList("4:0@0+1000=su"), recorder.samples);
+    }
+
+    @Test
+    public void testTablesThatClaimMoreThanTheyHold() throws Exception
+    {
+        byte[] stts = box("stts", new byte[4], int32(999), int32(3), int32(10));
+        byte[] stsc = box("stsc", new byte[4], int32(999), int32(1), int32(3), int32(1));
+        byte[] stsz = box("stsz", new byte[4], int32(0), int32(1000000000), int32(2), int32(3), int32(1));
+        byte[] probe = box("moov", textTrak(3, null, stts, stsc, stsz, box("stco", new byte[4], int32(999), int32(0))));
+        byte[] file = join(box("moov", textTrak(3, null, stts, stsc, stsz, box("stco", new byte[4], int32(999), int32(probe.length + 8)))),
+            box("mdat", ascii("aabbbc")));
+        TextRecorder recorder = new TextRecorder();
+        List<String> errors = new ArrayList<String>();
+        read(file, recorder, errors);
+        assertEquals(Arrays.asList("3:0@0+10=aa", "3:1@10+10=bbb", "3:2@20+10=c"), recorder.samples);
+        assertTrue(errors.toString(), errors.isEmpty());
+    }
+
+    @Test
+    public void testRunDataOffsetIsRelativeToTheFragmentBase() throws Exception
+    {
+        byte[] moov = box("moov", textTrak(2, null), box("mvex", box("trex", new byte[4], int32(2), int32(1), int32(1000), int32(2), int32(0))));
+        // tfhd: track 2 with an explicit base 4 bytes before the sample; trun: data offset 4, one sample of the default size
+        byte[] probe = moof(box("traf", box("tfhd", new byte[] {0, 0, 0, 1}, int32(2), int64(0)), box("trun", new byte[] {0, 0, 0, 1}, int32(1), int32(4))));
+        long sample = moov.length + probe.length + 8;
+        byte[] file = join(moov, moof(box("traf", box("tfhd", new byte[] {0, 0, 0, 1}, int32(2), int64(sample - 4)),
+            box("trun", new byte[] {0, 0, 0, 1}, int32(1), int32(4)))), box("mdat", ascii("hi")));
+        TextRecorder recorder = new TextRecorder();
+        List<String> errors = new ArrayList<String>();
+        read(file, recorder, errors);
+        assertEquals(Collections.singletonList("2:0@0+1000=hi"), recorder.samples);
+        assertTrue(errors.toString(), errors.isEmpty());
+    }
+
+    @Test(timeout = 10000)
+    public void testHugeRunsOfOtherTracksAreNotWalked() throws Exception
+    {
+        byte[] moov = box("moov", box("trak", box("tkhd", new byte[12], int32(1), new byte[4])), textTrak(2, null),
+            box("mvex", box("trex", new byte[4], int32(1), int32(1), int32(1), int32(2), int32(0)),
+                box("trex", new byte[4], int32(2), int32(1), int32(1000), int32(2), int32(0))));
+        // 200 runs of 4 billion default-sized samples of track 1, then one sample of track 2 at the moof
+        byte[] huge = box("traf", box("tfhd", new byte[] {0, 2, 0, 0}, int32(1)), box("trun", new byte[4], int32(0xFFFFFFFF)));
+        byte[][] runs = new byte[201][];
+        Arrays.fill(runs, 0, 200, huge);
+        runs[200] = box("traf", box("tfhd", new byte[] {0, 2, 0, 0}, int32(2)), box("trun", new byte[] {0, 0, 0, 1}, int32(1), int32(0)));
+        byte[] probe = moof(join(runs));
+        runs[200] = box("traf", box("tfhd", new byte[] {0, 2, 0, 0}, int32(2)), box("trun", new byte[] {0, 0, 0, 1}, int32(1), int32(probe.length + 8)));
+        byte[] file = join(moov, moof(join(runs)), box("mdat", ascii("ok")));
+        TextRecorder recorder = new TextRecorder();
+        read(file, recorder, new ArrayList<String>());
+        assertEquals(Collections.singletonList("2:0@0+1000=ok"), recorder.samples);
+    }
+
+    @Test
+    public void testFragmentAfterADamagedOneIsSkipped() throws Exception
+    {
+        byte[] moov = box("moov", box("trak", box("tkhd", new byte[12], int32(1), new byte[4])), textTrak(2, null),
+            box("mvex", box("trex", new byte[4], int32(2), int32(1), int32(1000), int32(2), int32(0))));
+        // track 1's tfhd promises a base offset it does not hold; track 2's traf has no base of its own
+        byte[] damaged = moof(join(box("traf", box("tfhd", new byte[] {0, 0, 0, 1}, int32(1))),
+            box("traf", box("tfhd", new byte[4], int32(2)), box("trun", new byte[4], int32(1)))));
+        byte[] probe = moof(box("traf", box("tfhd", new byte[] {0, 2, 0, 0}, int32(2)), box("trun", new byte[] {0, 0, 0, 1}, int32(1), int32(0))));
+        byte[] later = moof(box("traf", box("tfhd", new byte[] {0, 2, 0, 0}, int32(2)), box("trun", new byte[] {0, 0, 0, 1}, int32(1), int32(probe.length + 8))));
+        byte[] file = join(moov, damaged, box("mdat", ascii("xx")), later, box("mdat", ascii("ok")));
+        TextRecorder recorder = new TextRecorder();
+        List<String> errors = new ArrayList<String>();
+        read(file, recorder, errors);
+        assertEquals(Collections.singletonList("2:0@0+1000=ok"), recorder.samples);
+        assertTrue(errors.toString(), errors.toString().contains("follows a damaged track fragment"));
+    }
+
+    private static byte[] moof(byte[] trafs)
+    {
+        return box("moof", box("mfhd", new byte[4], int32(1)), trafs);
+    }
+
+    /** A text track with {@code tx3g} samples, an English 1000 Hz {@code mdhd} and {@code tables}. */
+    private static byte[] textTrak(int id, byte[] tref, byte[]... tables)
+    {
+        byte[] mdhd = box("mdhd", new byte[12], int32(1000), int32(0), new byte[] {(byte) (ENG >> 8), (byte) ENG}, new byte[2]);
+        byte[] hdlr = box("hdlr", new byte[8], ascii("text"), new byte[13]);
+        byte[] stsd = box("stsd", new byte[4], int32(1), box("tx3g", new byte[8]));
+        return box("trak", box("tkhd", new byte[12], int32(id), new byte[4]), tref == null ? new byte[0] : tref,
+            box("mdia", mdhd, hdlr, box("minf", box("stbl", stsd, join(tables)))));
+    }
+
+    private static byte[] stco(int offset)
+    {
+        return box("stco", new byte[4], int32(1), int32(offset));
+    }
+
+    private static byte[] int64(long value)
+    {
+        return join(int32((int) (value >> 32)), int32((int) value));
     }
 
     private static void read(byte[] file, IsoSamples.SampleReader reader, List<String> errors)
