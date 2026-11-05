@@ -158,9 +158,23 @@ public class Cr3MetadataReader
     public static IsoBoxContext newRoot(@NotNull Metadata metadata, @Nullable IsoBoxContext.ErrorHandler errors)
     {
         Cr3Directory directory = new Cr3Directory();
-        metadata.addDirectory(directory);
         IsoBoxContext root = errors == null ? IsoBoxContext.root(metadata, directory) : IsoBoxContext.root(metadata, errors);
-        root.put(Cr3Directory.class, directory);
+        prepare(root, directory);
         return root;
+    }
+
+    /**
+     * Prepares a file context made for another format to also run these readers, for files
+     * that combine formats: it adds a {@link Cr3Directory}.
+     */
+    public static void prepare(@NotNull IsoBoxContext root)
+    {
+        prepare(root, new Cr3Directory());
+    }
+
+    private static void prepare(@NotNull IsoBoxContext root, @NotNull Cr3Directory directory)
+    {
+        root.metadata().addDirectory(directory);
+        root.put(Cr3Directory.class, directory);
     }
 }
