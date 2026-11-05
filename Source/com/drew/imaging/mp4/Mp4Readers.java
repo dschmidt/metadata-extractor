@@ -440,8 +440,7 @@ final class Mp4Readers
     /** A Windows {@code Xtra} box: properties of the Windows file properties dialog, as UTF-16LE strings. */
     private static void readXtra(@NotNull SequentialReader reader, long length, @NotNull Mp4Directory directory) throws IOException
     {
-        long start = reader.getPosition();
-        while (reader.getPosition() - start < length) {
+        while (reader.getPosition() < length) {
             long entryStart = reader.getPosition();
             long entrySize = reader.getUInt32();
             if (entrySize < 12)
