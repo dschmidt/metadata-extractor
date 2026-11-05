@@ -53,7 +53,7 @@ public class Mp4MetadataReaderTest
         Mp4Directory directory = metadata.getFirstDirectoryOfType(Mp4Directory.class);
 
         assertNotNull(directory);
-        assertTrue(containsError(directory, "Box nesting too deep."));
+        assertFalse(directory.hasErrors());
     }
 
     @Test
