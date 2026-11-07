@@ -29,6 +29,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -102,6 +103,7 @@ public final class IsoItems
     @NotNull
     public static IsoBoxReader readers(@NotNull final List<? extends ItemReader> itemReaders, @NotNull String... metaPaths)
     {
+        final List<String> locating = Arrays.asList(metaPaths);
         final List<String> paths = new ArrayList<String>();
         for (String meta : metaPaths) {
             paths.add(meta + "/iinf/infe");
@@ -115,6 +117,13 @@ public final class IsoItems
             public Iterable<String> getBoxPaths()
             {
                 return paths;
+            }
+
+            @NotNull
+            @Override
+            public Iterable<String> getLocatingPaths()
+            {
+                return locating;
             }
 
             @Override

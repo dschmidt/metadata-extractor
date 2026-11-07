@@ -233,7 +233,16 @@ public class ImageMetadataReader
         InputStream inputStream = new FileInputStream(file);
         Metadata metadata;
         try {
-            metadata = readMetadata(inputStream, file.length(), file.getName());
+            BufferedInputStream bufferedInputStream = new BufferedInputStream(inputStream);
+            FileType fileType = FileTypeDetector.detectFileType(bufferedInputStream, file.getName());
+            if (fileType == FileType.Heif || fileType == FileType.Avif) {
+                // Item data can precede the boxes that locate it; a file is read by position for it
+                metadata = new Metadata();
+                HeifMetadataReader.extract(file, metadata);
+            } else {
+                metadata = readMetadata(bufferedInputStream, file.length(), fileType);
+            }
+            metadata.addDirectory(new FileTypeDirectory(fileType));
         } finally {
             inputStream.close();
         }

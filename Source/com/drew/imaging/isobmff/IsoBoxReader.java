@@ -23,6 +23,7 @@ package com.drew.imaging.isobmff;
 import com.drew.lang.annotations.NotNull;
 
 import java.io.IOException;
+import java.util.Collections;
 
 /**
  * Reads boxes at registered paths, in the way {@code JpegSegmentMetadataReader} reads JPEG
@@ -39,6 +40,20 @@ public interface IsoBoxReader
 {
     @NotNull
     Iterable<String> getBoxPaths();
+
+    /**
+     * The paths of the boxes that locate data by input position, which this reader asks for with
+     * {@link IsoBoxContext#requestRange}: HEIF's {@code meta}, whose {@code iloc} places the items,
+     * or MP4's {@code moov}, whose sample tables place the samples. Until the walk has read every
+     * such box once, it keeps the top-level boxes it would otherwise skip, up to the walk's buffer
+     * limit, so that a range in them can still be served when the input cannot be read again.
+     * Readers that ask for no ranges leave this empty, the default.
+     */
+    @NotNull
+    default Iterable<String> getLocatingPaths()
+    {
+        return Collections.emptyList();
+    }
 
     /**
      * Reads the box of {@code box}. The payload reader starts at the beginning of the payload,

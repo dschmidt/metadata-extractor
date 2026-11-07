@@ -29,6 +29,8 @@ import org.junit.Test;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -509,10 +511,33 @@ public class IsoBoxReadersTest
 
     private static IsoBoxReaders rangeRequester(final List<String> got, final long... offsets)
     {
-        return new IsoBoxReaders(PLAIN, Collections.singletonList(IsoBoxReaders.on(new IsoBoxReaders.Callback()
+        return rangeRequester(got, false, IsoBoxReaders.DEFAULT_MAX_BUFFERED_PAYLOAD, offsets);
+    }
+
+    /**
+     * A walk whose reader of {@code moov/stco} asks for two bytes at each of {@code offsets};
+     * if {@code locating}, it names {@code moov} as the box that locates them.
+     */
+    private static IsoBoxReaders rangeRequester(final List<String> got, final boolean locating, long maxBuffered, final long... offsets)
+    {
+        return new IsoBoxReaders(PLAIN, Collections.singletonList(new IsoBoxReader()
         {
+            @NotNull
             @Override
-            public void read(@NotNull IsoBoxContext box)
+            public Iterable<String> getBoxPaths()
+            {
+                return Collections.singletonList("moov/stco");
+            }
+
+            @NotNull
+            @Override
+            public Iterable<String> getLocatingPaths()
+            {
+                return locating ? Collections.singletonList("moov") : Collections.<String>emptyList();
+            }
+
+            @Override
+            public void readBox(@NotNull IsoBoxContext box)
             {
                 for (final long offset : offsets) {
                     box.requestRange(offset, 2, new IsoBoxContext.RangeReader()
@@ -520,12 +545,126 @@ public class IsoBoxReadersTest
                         @Override
                         public void read(@NotNull IsoBoxContext data, @NotNull SequentialReader reader) throws IOException
                         {
-                            got.add(data.box().type + "@" + offset + "=" + reader.getUInt8() + "," + reader.getUInt8());
+                            String in = data.parent() == null ? "file" : data.box().type;
+                            got.add(in + "@" + offset + "=" + reader.getUInt8() + "," + reader.getUInt8());
                         }
                     });
                 }
             }
-        }, "moov/stco")));
+        }), maxBuffered);
+    }
+
+    @Test
+    public void testBoxesBeforeALocatingBoxAreKeptForItsRanges() throws Exception
+    {
+        List<String> got = new ArrayList<String>();
+        byte[] file = join(box("mdat", new byte[] {1, 2, 3}), box("moov", box("stco", new byte[0])));
+        List<String> errors = new ArrayList<String>();
+        IsoBoxContext root = IsoBoxContext.root(new Metadata(), collect(errors));
+        rangeRequester(got, true, 64, 9).read(new ByteArrayInputStream(file), root);
+        assertEquals(Collections.singletonList("mdat@9=2,3"), got);
+        assertFalse(IsoBoxReaders.hasPendingRanges(root));
+        assertTrue(errors.toString(), errors.isEmpty());
+    }
+
+    @Test
+    public void testNothingIsKeptOnceTheLocatingBoxesAreRead() throws Exception
+    {
+        byte[] file = join(box("moov", box("stco", new byte[0])), box("mdat", new byte[1000]));
+        final int[] read = new int[1];
+        InputStream in = new FilterInputStream(new ByteArrayInputStream(file))
+        {
+            @Override
+            public int read() throws IOException
+            {
+                int b = super.read();
+                if (b >= 0)
+                    read[0]++;
+                return b;
+            }
+
+            @Override
+            public int read(byte[] buffer, int offset, int length) throws IOException
+            {
+                int n = super.read(buffer, offset, length);
+                read[0] += Math.max(n, 0);
+                return n;
+            }
+        };
+        rangeRequester(new ArrayList<String>(), true, 64 * 1024).read(in, IsoBoxContext.root(new Metadata(), collect(new ArrayList<String>())));
+        // three box headers, and the last skipped byte of 'mdat', which the iterator reads to check that it is there
+        assertEquals(8 + 8 + 8 + 1, read[0]);
+    }
+
+    @Test
+    public void testBoxesAboveTheBufferLimitAreNotKept() throws Exception
+    {
+        List<String> got = new ArrayList<String>();
+        byte[] file = join(box("mdat", new byte[] {1, 2, 3}), box("moov", box("stco", new byte[0])));
+        List<String> errors = new ArrayList<String>();
+        IsoBoxContext root = IsoBoxContext.root(new Metadata(), collect(errors));
+        IsoBoxReaders readers = rangeRequester(got, true, 2, 9);
+        readers.read(new ByteArrayInputStream(file), root);
+        assertTrue(got.isEmpty());
+        assertEquals(1, errors.size());
+        assertTrue(errors.get(0), errors.get(0).contains("not read"));
+        // a caller that can read the input again still can
+        readers.read(new IsoBoxIterator(new ByteArrayInputStream(file)), root);
+        readers.readRanges(new IsoBoxIterator(new ByteArrayInputStream(file)), root);
+        assertEquals(Collections.singletonList("mdat@9=2,3"), got);
+    }
+
+    @Test
+    public void testFreeBoxesAreNotKept() throws Exception
+    {
+        List<String> got = new ArrayList<String>();
+        byte[] file = join(box("free", new byte[] {1, 2, 3}), box("moov", box("stco", new byte[0])));
+        List<String> errors = new ArrayList<String>();
+        rangeRequester(got, true, 64, 9).read(new ByteArrayInputStream(file), IsoBoxContext.root(new Metadata(), collect(errors)));
+        assertTrue(got.isEmpty());
+        assertEquals(1, errors.size());
+    }
+
+    @Test
+    public void testRangesBeforeTheirLocationAreReadByPositionFromAFile() throws Exception
+    {
+        List<String> got = new ArrayList<String>();
+        byte[] bytes = join(box("mdat", new byte[] {1, 2, 3, 4, 5, 6}), box("moov", box("stco", new byte[0])));
+        File file = File.createTempFile("boxes", ".mp4");
+        try {
+            FileOutputStream out = new FileOutputStream(file);
+            out.write(bytes);
+            out.close();
+            List<String> errors = new ArrayList<String>();
+            IsoBoxContext root = IsoBoxContext.root(new Metadata(), collect(errors));
+            // 'moov' is not named as locating, so nothing is kept; the file is read by position instead
+            rangeRequester(got, false, 64, 12, 9, 100).read(file, root);
+            assertEquals(Arrays.asList("file@9=2,3", "file@12=5,6"), got);
+            assertEquals(1, errors.size());
+            assertTrue(errors.get(0), errors.get(0).contains("outside the input"));
+        } finally {
+            assertTrue(file.delete());
+        }
+    }
+
+    @Test
+    public void testNothingIsKeptWhenTheInputIsReadByPosition() throws Exception
+    {
+        List<String> got = new ArrayList<String>();
+        byte[] bytes = join(box("mdat", new byte[] {1, 2, 3}), box("moov", box("stco", new byte[0])));
+        File file = File.createTempFile("boxes", ".mp4");
+        try {
+            FileOutputStream out = new FileOutputStream(file);
+            out.write(bytes);
+            out.close();
+            List<String> errors = new ArrayList<String>();
+            // a limit of 2 would stop 'mdat' from being kept, but by position it is not needed
+            rangeRequester(got, true, 2, 9).read(file, IsoBoxContext.root(new Metadata(), collect(errors)));
+            assertEquals(Collections.singletonList("file@9=2,3"), got);
+            assertTrue(errors.toString(), errors.isEmpty());
+        } finally {
+            assertTrue(file.delete());
+        }
     }
 
     @Test

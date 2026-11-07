@@ -27,6 +27,7 @@ import com.drew.lang.annotations.Nullable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -277,6 +278,14 @@ public final class IsoSamples
             public Iterable<String> getBoxPaths()
             {
                 return paths;
+            }
+
+            /** The samples of {@code moov}'s tracks; a fragment's samples follow its {@code moof}. */
+            @NotNull
+            @Override
+            public Iterable<String> getLocatingPaths()
+            {
+                return Collections.singletonList("moov");
             }
 
             @Override

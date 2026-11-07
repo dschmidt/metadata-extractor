@@ -20,13 +20,17 @@
  */
 package com.drew.imaging.isobmff;
 
+import com.drew.lang.RandomAccessFileReader;
+import com.drew.lang.RandomAccessReader;
 import com.drew.lang.SequentialByteArrayReader;
 import com.drew.lang.SequentialReader;
 import com.drew.lang.annotations.NotNull;
 import com.drew.lang.annotations.Nullable;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.RandomAccessFile;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -48,6 +52,15 @@ import java.util.List;
  * several readers, or with a reader and registered paths below it, is read into memory once
  * (up to {@code maxBufferedPayload}) so each reader and the descent start from the beginning of
  * the payload.
+ * <p>
+ * Data that boxes locate by input position rather than by path, such as HEIF items or track
+ * samples, is asked for with {@link IsoBoxContext#requestRange} and read on the way through the
+ * box it lies in, usually {@code mdat}. When that box comes before the box that locates the data,
+ * the walk has passed it by the time the range is asked for. Reading a {@link File} serves such
+ * ranges by position at the end. Reading a stream, the walk keeps the top-level boxes it would
+ * skip, up to {@code maxBufferedPayload} each, until it has read every box the readers name in
+ * {@link IsoBoxReader#getLocatingPaths}; with the usual order, {@code meta} or {@code moov} before
+ * {@code mdat}, nothing is kept. Ranges that could not be read either way are reported.
  * <p>
  * A problem in one box is reported to the file context's error handler and the walk goes on
  * with the next box. When the input ends inside a box, that is reported once, as a
@@ -91,6 +104,8 @@ public final class IsoBoxReaders
     private final Node _root = new Node();
     /** Every reader, in the order the readers of one box run: the layout's first, then as passed. */
     private final List<IsoBoxReader> _order = new ArrayList<IsoBoxReader>();
+    /** How many boxes the readers name in {@link IsoBoxReader#getLocatingPaths}. */
+    private int _locatingCount;
     private static final List<Node> NOWHERE = Collections.singletonList(new Node());
 
     /** A walk with {@link #DEFAULT_MAX_BUFFERED_PAYLOAD}. */
@@ -101,8 +116,7 @@ public final class IsoBoxReaders
 
     /**
      * @param maxBufferedPayload the largest payload read into memory for several readers of one
-     *                           box
-     *                           or for ranges that overlap
+     *                           box, for ranges that overlap, or kept for ranges asked for later
      */
     public IsoBoxReaders(@NotNull IsoBoxLayout layout, @NotNull Iterable<? extends IsoBoxReader> readers, long maxBufferedPayload)
     {
@@ -125,13 +139,21 @@ public final class IsoBoxReaders
             if (!node.readers.contains(reader))
                 node.readers.add(reader);
         }
+        for (String path : reader.getLocatingPaths()) {
+            Node node = _root;
+            for (String segment : path.split("/"))
+                node = node.child(segment);
+            if (node.locating < 0)
+                node.locating = _locatingCount++;
+        }
     }
 
     /**
      * Reads {@code inputStream}, starting from the file context {@code root} (see
-     * {@link IsoBoxContext#root}).
-     * Ranges asked for that could not be read are reported as errors; to read them in a second
-     * pass over a marked stream, see {@link #read(InputStream, IsoBoxContext, int)}.
+     * {@link IsoBoxContext#root}). Ranges asked for after the walk passed their box are served
+     * from the boxes it kept (see {@link IsoBoxReader#getLocatingPaths}); those that could not
+     * be read are reported as errors. To read them from the input a second time instead, see
+     * {@link #readRanges}.
      */
     public void read(@NotNull InputStream inputStream, @NotNull IsoBoxContext root)
     {
@@ -140,42 +162,79 @@ public final class IsoBoxReaders
     }
 
     /**
-     * Reads {@code inputStream} like {@link #read(InputStream, IsoBoxContext)}. Data that comes
-     * before the boxes that locate it, such as HEIF items in an {@code mdat} before
-     * {@code meta}, needs a second pass: if {@code rereadLimit} is positive and the stream
-     * supports {@link InputStream#mark}, the stream is marked with that limit and read again for
-     * that data only. Data that still could not be read is reported as an error.
+     * Reads {@code file} like {@link #read(InputStream, IsoBoxContext)}, but reads ranges asked
+     * for after the walk passed their box by position at the end, so nothing is kept in memory
+     * for them. Files beyond 2 GiB cannot be read by position.
      */
-    public void read(@NotNull InputStream inputStream, @NotNull IsoBoxContext root, int rereadLimit)
+    public void read(@NotNull File file, @NotNull IsoBoxContext root) throws IOException
     {
-        boolean marked = rereadLimit > 0 && inputStream.markSupported();
-        if (marked)
-            inputStream.mark(rereadLimit);
-        read(new IsoBoxIterator(inputStream), root);
-        if (marked && hasPendingRanges(root)) {
-            try {
-                inputStream.reset();
-                readRanges(new IsoBoxIterator(inputStream), root);
-            } catch (IOException e) {
-                root.addError("Unable to read the input a second time: " + e.getMessage());
-            }
+        RandomAccessFile randomAccessFile = new RandomAccessFile(file, "r");
+        try {
+            read(new RandomAccessFileReader(randomAccessFile), root);
+        } finally {
+            randomAccessFile.close();
+        }
+    }
+
+    /**
+     * Reads {@code reader} like {@link #read(InputStream, IsoBoxContext)}, but reads ranges asked
+     * for after the walk passed their box by position at the end, so nothing is kept in memory
+     * for them. The reader addresses up to 2 GiB.
+     */
+    public void read(@NotNull RandomAccessReader reader, @NotNull IsoBoxContext root) throws IOException
+    {
+        root._seek = reader;
+        try {
+            read(new IsoBoxIterator(new SeekingSequentialReader(reader), reader.getLength()), root);
+            if (!root._stopped && hasPendingRanges(root))
+                seekRanges(reader, root);
+        } finally {
+            root._seek = null;
         }
         reportPendingRanges(root);
+    }
+
+    /** Reads the pending ranges from {@code reader} by position, in order. */
+    private static void seekRanges(RandomAccessReader reader, IsoBoxContext root) throws IOException
+    {
+        long length = reader.getLength();
+        for (Ranges.Range range : root._ranges.takeAll()) {
+            if (range.offset < 0 || range.length < 0 || range.length > length || range.offset > length - range.length) {
+                root.addError("Range at input offset " + range.offset + " (" + range.length + " bytes) lies outside the input; skipped");
+                continue;
+            }
+            if (range.length > Integer.MAX_VALUE) {
+                root.addError("Range at input offset " + range.offset + " (" + range.length + " bytes) is too large to read; skipped");
+                continue;
+            }
+            try {
+                byte[] bytes = reader.getBytes(SeekingSequentialReader.index(range.offset), (int) range.length);
+                range.reader.read(root, new SequentialByteArrayReader(bytes));
+            } catch (IOException e) {
+                root.addError("Error reading range at input offset " + range.offset + ": " + e.getMessage(), e);
+            }
+        }
     }
 
     /**
      * Reads {@code boxes}, starting from the file context {@code root} (see
      * {@link IsoBoxContext#root}).
-     * Ranges asked for that came before the boxes that located them stay pending (see
-     * {@link #hasPendingRanges}): follow with {@link #readRanges} over a second pass, or with
-     * {@link #reportPendingRanges}.
+     * Ranges asked for that came before the boxes that located them, and that the walk did not
+     * keep, stay pending (see {@link #hasPendingRanges}): follow with {@link #readRanges} over a
+     * second pass, or with {@link #reportPendingRanges}.
      */
     public void read(@NotNull IsoBoxIterator boxes, @NotNull IsoBoxContext root)
     {
         root._nodes = _root.self;
         root._readers = this;
-        new Walk().walk(boxes, root, _root.self);
-        root.done();
+        root._locatingLeft = _locatingCount;
+        root._locatingSeen = _locatingCount == 0 ? null : new boolean[_locatingCount];
+        try {
+            new Walk().walk(boxes, root, _root.self);
+            root.done();
+        } finally {
+            root.releaseRetained();
+        }
     }
 
     /**
@@ -229,17 +288,12 @@ public final class IsoBoxReaders
                             + container + "'; read to the end of '" + container + "'");
                     }
                     List<Node> next = step(nodes, box);
-                    Ranges ranges = parent.root()._ranges;
-                    if (next.isEmpty() && ranges != null && !ranges.isEmpty()) {
-                        long end = box.payloadSize == -1 ? Long.MAX_VALUE : box.payloadOffset + box.payloadSize;
-                        if (ranges.within(box.payloadOffset, end))
-                            serve(boxes, new IsoBoxContext(parent, box), ranges.take(box.payloadOffset, end));
+                    if (next.isEmpty()) {
+                        skip(boxes, parent, box);
                         if (_ended || parent.root()._stopped)
                             return;
                         continue;
                     }
-                    if (next.isEmpty())
-                        continue;
                     IsoBoxContext context = new IsoBoxContext(parent, box);
                     context._nodes = next;
                     try {
@@ -250,6 +304,7 @@ public final class IsoBoxReaders
                     } catch (IOException e) {
                         report(context, "Error reading box '" + box.type + "': " + e.getMessage(), e);
                     }
+                    located(parent.root(), next);
                     context.done();
                     if (_ended)
                         return;
@@ -259,6 +314,66 @@ public final class IsoBoxReaders
             } catch (IOException e) {
                 report(parent, String.valueOf(e.getMessage()), e);
             }
+        }
+
+        /** Counts the locating boxes among {@code nodes} that the walk reads for the first time. */
+        private void located(IsoBoxContext root, List<Node> nodes)
+        {
+            if (root._locatingLeft == 0)
+                return;
+            for (Node node : nodes) {
+                if (node.locating >= 0 && !root._locatingSeen[node.locating]) {
+                    root._locatingSeen[node.locating] = true;
+                    root._locatingLeft--;
+                }
+            }
+        }
+
+        /**
+         * Passes a box no reader is registered for: serves the pending ranges in it, and keeps
+         * it (see {@link IsoBoxReader#getLocatingPaths}) while a locating box is still to come.
+         */
+        private void skip(IsoBoxIterator boxes, IsoBoxContext parent, IsoBox box) throws IOException
+        {
+            IsoBoxContext root = parent.root();
+            Ranges ranges = root._ranges;
+            long end = box.payloadSize == -1 ? Long.MAX_VALUE : box.payloadOffset + box.payloadSize;
+            boolean wanted = ranges != null && ranges.within(box.payloadOffset, end);
+            if (keeps(root, parent, box)) {
+                IsoBoxContext context = new IsoBoxContext(parent, box);
+                IsoBoxContext.Retained kept;
+                try {
+                    kept = new IsoBoxContext.Retained(context, boxes.payloadBytes());
+                } catch (IOException e) {
+                    report(context, "Error reading box '" + box.type + "': " + e.getMessage(), e);
+                    return;
+                }
+                root.retain(kept);
+                if (wanted) {
+                    for (Ranges.Range range : ranges.take(box.payloadOffset, end)) {
+                        if (kept.covers(range.offset, range.length))
+                            kept.serve(range);
+                        else
+                            context.addError("Range at input offset " + range.offset + " (" + range.length + " bytes) runs past the end of '" + box.type + "'; skipped");
+                        if (root._stopped)
+                            return;
+                    }
+                }
+            } else if (wanted) {
+                serve(boxes, new IsoBoxContext(parent, box), ranges.take(box.payloadOffset, end));
+            }
+        }
+
+        /**
+         * Whether to keep {@code box}: a top-level box of known size within the buffer limit, while
+         * a locating box is still to come and the input cannot be read by position. {@code free}
+         * and {@code skip} carry nothing by definition.
+         */
+        private boolean keeps(IsoBoxContext root, IsoBoxContext parent, IsoBox box)
+        {
+            return root._locatingLeft > 0 && root._seek == null && parent == root
+                && box.payloadSize > 0 && box.payloadSize <= _maxBufferedPayload
+                && !box.type.equals("free") && !box.type.equals("skip");
         }
 
         /**
@@ -448,6 +563,8 @@ public final class IsoBoxReaders
         final List<Node> uuidChildren = new ArrayList<Node>(0);
         @Nullable
         Node wildcard;
+        /** This box's index among the locating boxes (see {@link IsoBoxReader#getLocatingPaths}), or -1. */
+        int locating = -1;
 
         Node child(String segment)
         {

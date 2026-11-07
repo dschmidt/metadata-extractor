@@ -23,12 +23,16 @@ package com.drew.imaging.heif;
 import com.drew.imaging.ImageMetadataReader;
 import com.drew.imaging.isobmff.IsoBoxContext;
 import com.drew.imaging.isobmff.IsoBoxReader;
+import com.drew.imaging.isobmff.IsoBoxReaders;
 import com.drew.imaging.isobmff.IsoItems;
+import com.drew.imaging.isobmff.IsoStandardLayout;
 import com.drew.imaging.mp4.Mp4MetadataReader;
 import com.drew.lang.SequentialReader;
 import com.drew.lang.annotations.NotNull;
 import com.drew.metadata.Directory;
 import com.drew.metadata.Metadata;
+import com.drew.metadata.file.FileSystemDirectory;
+import com.drew.metadata.file.FileTypeDirectory;
 import com.drew.metadata.heif.HeifDirectory;
 import com.drew.metadata.icc.IccDirectory;
 import com.drew.metadata.mp4.Mp4Directory;
@@ -37,6 +41,8 @@ import org.junit.Test;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -258,6 +264,64 @@ public class HeifMetadataReaderTest
         assertEquals(600, metadata.getFirstDirectoryOfType(Mp4Directory.class).getInt(Mp4Directory.TAG_TIME_SCALE));
         for (Directory directory : metadata.getDirectories())
             assertFalse(directory.getName() + ": " + directory.getErrors(), directory.hasErrors());
+    }
+
+    @Test
+    public void testMediaDataBeforeMetaIsKeptUntilMetaIsRead() throws Exception
+    {
+        Metadata metadata = HeifMetadataReader.readMetadata(new ByteArrayInputStream(mediaDataFirstFile(xmp())));
+        assertEquals("Test", metadata.getFirstDirectoryOfType(XmpDirectory.class).getXmpProperties().get("xmp:CreatorTool"));
+        for (Directory directory : metadata.getDirectories())
+            assertFalse(directory.getName() + ": " + directory.getErrors(), directory.hasErrors());
+    }
+
+    @Test
+    public void testMediaDataBeforeMetaAboveTheBufferLimitIsReported() throws Exception
+    {
+        List<IsoBoxReader> readers = new ArrayList<IsoBoxReader>(HeifMetadataReader.ALL_READERS);
+        readers.add(HeifMetadataReader.itemReaders(HeifMetadataReader.ALL_ITEM_READERS));
+        Metadata metadata = new Metadata();
+        new IsoBoxReaders(IsoStandardLayout.INSTANCE, readers, 10)
+            .read(new ByteArrayInputStream(mediaDataFirstFile(xmp())), HeifMetadataReader.newRoot(metadata, null));
+        assertNull(metadata.getFirstDirectoryOfType(XmpDirectory.class));
+        List<String> errors = new ArrayList<String>();
+        for (String error : metadata.getFirstDirectoryOfType(HeifDirectory.class).getErrors())
+            errors.add(error);
+        assertEquals(errors.toString(), 1, errors.size());
+        assertTrue(errors.get(0), errors.get(0).contains("not read"));
+    }
+
+    @Test
+    public void testMediaDataBeforeMetaIsReadByPositionFromAFile() throws Exception
+    {
+        File file = File.createTempFile("item", ".heic");
+        try {
+            FileOutputStream out = new FileOutputStream(file);
+            out.write(mediaDataFirstFile(xmp()));
+            out.close();
+
+            Metadata metadata = HeifMetadataReader.readMetadata(file);
+            assertEquals("Test", metadata.getFirstDirectoryOfType(XmpDirectory.class).getXmpProperties().get("xmp:CreatorTool"));
+            assertNotNull(metadata.getFirstDirectoryOfType(FileSystemDirectory.class));
+
+            metadata = ImageMetadataReader.readMetadata(file);
+            assertEquals("Test", metadata.getFirstDirectoryOfType(XmpDirectory.class).getXmpProperties().get("xmp:CreatorTool"));
+            assertEquals("HEIF", metadata.getFirstDirectoryOfType(FileTypeDirectory.class).getString(FileTypeDirectory.TAG_DETECTED_FILE_TYPE_NAME));
+            assertNotNull(metadata.getFirstDirectoryOfType(FileSystemDirectory.class));
+            for (Directory directory : metadata.getDirectories())
+                assertFalse(directory.getName() + ": " + directory.getErrors(), directory.hasErrors());
+        } finally {
+            assertTrue(file.delete());
+        }
+    }
+
+    /** A file with one XMP item in an 'mdat' that comes before 'meta'. */
+    private static byte[] mediaDataFirstFile(byte[] xmp)
+    {
+        byte[] ftyp = box("ftyp", concat(ascii("heic"), new byte[4], ascii("mif1")));
+        byte[] withEmptyMediaData = itemFile(0, new int[][] {{ftyp.length + 8, xmp.length}}, null, new byte[0]);
+        byte[] meta = Arrays.copyOfRange(withEmptyMediaData, ftyp.length, withEmptyMediaData.length - 8);
+        return concat(ftyp, box("mdat", xmp), meta);
     }
 
     private static byte[] xmp()

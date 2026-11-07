@@ -20,6 +20,7 @@
  */
 package com.drew.imaging.isobmff;
 
+import com.drew.lang.RandomAccessReader;
 import com.drew.lang.SequentialByteArrayReader;
 import com.drew.lang.SequentialReader;
 import com.drew.lang.annotations.NotNull;
@@ -73,6 +74,17 @@ public final class IsoBoxContext
     /** The ranges asked for and not served yet, on the root only. */
     @Nullable
     Ranges _ranges;
+    /** The reader to read ranges by position with when the input allows it, on the root only. */
+    @Nullable
+    RandomAccessReader _seek;
+    /** The boxes kept for ranges (see {@link IsoBoxReader#getLocatingPaths}), on the root only. */
+    @Nullable
+    private List<Retained> _retained;
+    /** How many of the walk's locating boxes have not been read yet, on the root only. */
+    int _locatingLeft;
+    /** Which of the walk's locating boxes have been read, by index, on the root only. */
+    @Nullable
+    boolean[] _locatingSeen;
     @Nullable
     private List<IsoBoxReaders.Callback> _whenDone;
 
@@ -274,7 +286,8 @@ public final class IsoBoxContext
     public interface RangeReader
     {
         /**
-         * @param box  the box the range lies in, typically {@code mdat}
+         * @param box  the box the range lies in, typically {@code mdat}, or the file context when
+         *             the range was read by position rather than on the way through a box
          * @param data a reader limited to the range; whatever is not read is skipped
          */
         void read(@NotNull IsoBoxContext box, @NotNull SequentialReader data) throws IOException;
@@ -284,14 +297,83 @@ public final class IsoBoxContext
      * Asks for {@code length} bytes at input position {@code offset}, for data that structure
      * boxes locate rather than a path, such as HEIF items or track samples. The walk hands them
      * to {@code reader} when it passes that position inside a box no reader is registered for,
-     * skipping everything else. A range the walk has already passed stays pending; see
+     * skipping everything else. A range in a box the walk has kept (see
+     * {@link IsoBoxReader#getLocatingPaths}) is read at once. A range the walk has already passed
+     * is read by position at the end when the input allows that (see
+     * {@link IsoBoxReaders#read(java.io.File, IsoBoxContext)}), and stays pending otherwise; see
      * {@link IsoBoxReaders#readRanges}.
      */
     public void requestRange(long offset, long length, @NotNull RangeReader reader)
     {
+        Ranges.Range range = new Ranges.Range(offset, length, reader);
+        Retained kept = _root.retained(offset, length);
+        if (kept != null) {
+            kept.serve(range);
+            return;
+        }
         if (_root._ranges == null)
             _root._ranges = new Ranges();
-        _root._ranges.add(new Ranges.Range(offset, length, reader));
+        _root._ranges.add(range);
+    }
+
+    /** A top-level box the walk kept in memory for ranges asked for after passing it. */
+    static final class Retained
+    {
+        @NotNull
+        final IsoBoxContext context;
+        final long offset;
+        @NotNull
+        final byte[] bytes;
+
+        Retained(@NotNull IsoBoxContext context, @NotNull byte[] bytes)
+        {
+            this.context = context;
+            this.offset = context.box().payloadOffset;
+            this.bytes = bytes;
+        }
+
+        boolean covers(long start, long length)
+        {
+            return start >= offset && length <= bytes.length && start - offset <= bytes.length - length;
+        }
+
+        void serve(@NotNull Ranges.Range range)
+        {
+            int from = (int) (range.offset - offset);
+            SequentialReader data = new BoundedSequentialReader(new SequentialByteArrayReader(bytes, from), from, from + range.length, context.box());
+            try {
+                range.reader.read(context, data);
+            } catch (IOException e) {
+                context.addError("Error reading range at input offset " + range.offset + ": " + e.getMessage(), e);
+            }
+        }
+    }
+
+    /** Keeps {@code kept} for the rest of the walk; on the file context only. */
+    void retain(@NotNull Retained kept)
+    {
+        if (_retained == null)
+            _retained = new ArrayList<Retained>(1);
+        _retained.add(kept);
+    }
+
+    /** The kept box holding all of the range, if any; on the file context only. */
+    @Nullable
+    Retained retained(long offset, long length)
+    {
+        if (_retained == null)
+            return null;
+        for (Retained kept : _retained) {
+            if (kept.covers(offset, length))
+                return kept;
+        }
+        return null;
+    }
+
+    /** Forgets the kept boxes; on the file context only. */
+    void releaseRetained()
+    {
+        _retained = null;
     }
 
     /**

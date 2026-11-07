@@ -31,10 +31,12 @@ import com.drew.lang.annotations.NotNull;
 import com.drew.lang.annotations.Nullable;
 import com.drew.metadata.Metadata;
 import com.drew.metadata.exif.ExifReader;
+import com.drew.metadata.file.FileSystemMetadataReader;
 import com.drew.metadata.heif.HeifDirectory;
 import com.drew.metadata.xmp.XmpReader;
 
 import java.io.ByteArrayInputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Arrays;
@@ -122,15 +124,38 @@ public class HeifMetadataReader
     }
 
     /**
-     * Reads {@code inputStream}. If item data comes before {@code meta} and the stream supports
-     * {@link InputStream#mark}, the stream is read a second time for it.
+     * Reads {@code inputStream}. Item data that comes before {@code meta} is kept in memory
+     * until {@code meta} is read, up to {@link IsoBoxReaders#DEFAULT_MAX_BUFFERED_PAYLOAD};
+     * beyond that it is reported, and {@link #readMetadata(File)} reads it without buffering.
      */
     @NotNull
     public static Metadata readMetadata(@NotNull InputStream inputStream)
     {
         Metadata metadata = new Metadata();
-        DEFAULT_READERS.read(inputStream, newRoot(metadata, null), Integer.MAX_VALUE);
+        extract(inputStream, metadata);
         return metadata;
+    }
+
+    /** Reads {@code file}, with item data read by position wherever it lies, and the file system's metadata. */
+    @NotNull
+    public static Metadata readMetadata(@NotNull File file) throws IOException
+    {
+        Metadata metadata = new Metadata();
+        extract(file, metadata);
+        new FileSystemMetadataReader().read(file, metadata);
+        return metadata;
+    }
+
+    /** Reads {@code inputStream} into {@code metadata}; see {@link #readMetadata(InputStream)}. */
+    public static void extract(@NotNull InputStream inputStream, @NotNull Metadata metadata)
+    {
+        DEFAULT_READERS.read(inputStream, newRoot(metadata, null));
+    }
+
+    /** Reads {@code file} into {@code metadata}, with item data read by position wherever it lies. */
+    public static void extract(@NotNull File file, @NotNull Metadata metadata) throws IOException
+    {
+        DEFAULT_READERS.read(file, newRoot(metadata, null));
     }
 
     /**

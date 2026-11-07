@@ -99,12 +99,23 @@ public class IsoSamplesTest
     }
 
     @Test
-    public void testSamplesBeforeMoovAreReadInASecondPass() throws Exception
+    public void testSamplesBeforeMoovAreKeptUntilMoovIsRead() throws Exception
+    {
+        Recorder recorder = new Recorder();
+        List<String> errors = new ArrayList<String>();
+        read(file(true), recorder, errors);
+        assertEquals(Arrays.asList("1:0=aa", "1:1=bbb", "1:2=c"), recorder.samples);
+        assertTrue(errors.toString(), errors.isEmpty());
+    }
+
+    @Test
+    public void testSamplesBeforeMoovAreReadInASecondPassWhenNotKept() throws Exception
     {
         Recorder recorder = new Recorder();
         List<String> errors = new ArrayList<String>();
         byte[] file = file(true);
-        IsoBoxReaders readers = new IsoBoxReaders(PLAIN, Collections.singletonList(IsoSamples.readers(recorder, 100)));
+        // a buffer limit of 0 keeps nothing
+        IsoBoxReaders readers = new IsoBoxReaders(PLAIN, Collections.singletonList(IsoSamples.readers(recorder, 100)), 0);
         IsoBoxContext root = IsoBoxContext.root(new Metadata(), collect(errors));
         readers.read(new IsoBoxIterator(new ByteArrayInputStream(file)), root);
         assertTrue(recorder.samples.isEmpty());
