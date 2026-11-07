@@ -21,12 +21,12 @@ have not been revalidated. It is not a substitute for the relevant specification
 
 Java-only behavior: item data (`Exif`, `mime` items) is located by `meta/iloc`
 and read from `mdat` on the way through the file. When `mdat` precedes `meta`,
-reading a `File` (`HeifMetadataReader.readMetadata(File)`, or
-`ImageMetadataReader.readMetadata(File)`) reads the item data by position after
-the walk; reading an `InputStream` keeps `mdat` in memory until `meta` is read,
-up to `IsoBoxReaders.DEFAULT_MAX_BUFFERED_PAYLOAD` (64 MiB), and reports the
-items as not read beyond that. With `meta` before `mdat`, the usual order,
-nothing is buffered either way.
+a `File` or `RandomAccessReader` input (`HeifMetadataReader.readMetadata(IsoInput)`,
+`readMetadata(File)`, or `ImageMetadataReader.readMetadata(File)`) reads the
+item data by position after the walk; an `InputStream` input keeps `mdat` in
+memory until `meta` is read, up to `IsoBoxReaders.DEFAULT_MAX_BUFFERED_PAYLOAD`
+(64 MiB), and reports the items as not read beyond that. With `meta` before
+`mdat`, the usual order, nothing is buffered either way.
 
 This document migrates a reference, not a verified feature inventory. Do not
 infer equivalent item, property, Exif, XMP, thumbnail, or transformation support

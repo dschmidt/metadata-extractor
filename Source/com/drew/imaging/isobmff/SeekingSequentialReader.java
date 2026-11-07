@@ -20,7 +20,6 @@
  */
 package com.drew.imaging.isobmff;
 
-import com.drew.lang.RandomAccessReader;
 import com.drew.lang.SequentialReader;
 import com.drew.lang.annotations.NotNull;
 
@@ -28,34 +27,26 @@ import java.io.EOFException;
 import java.io.IOException;
 
 /**
- * A sequential view of a {@link RandomAccessReader}, for walking the boxes of an input that can
+ * A sequential view of an {@link IsoInput.Seekable}, for walking the boxes of an input that can
  * also be read by position. Small reads come from a read-ahead buffer, so box headers do not
- * cost a seek each; large reads go to the reader directly.
+ * cost a seek each; large reads go to the input directly.
  */
 final class SeekingSequentialReader extends SequentialReader
 {
     private static final int BUFFER_SIZE = 8 * 1024;
 
     @NotNull
-    private final RandomAccessReader _reader;
+    private final IsoInput.Seekable _input;
     private final long _length;
     private long _position;
     private final byte[] _buffer = new byte[BUFFER_SIZE];
     private long _bufferStart;
     private int _bufferLength;
 
-    SeekingSequentialReader(@NotNull RandomAccessReader reader) throws IOException
+    SeekingSequentialReader(@NotNull IsoInput.Seekable input) throws IOException
     {
-        _reader = reader;
-        _length = reader.getLength();
-    }
-
-    /** The reader's index for input position {@code position}; readers address up to 2 GiB. */
-    static int index(long position) throws IOException
-    {
-        if (position > Integer.MAX_VALUE)
-            throw new IOException("Input position " + position + " is beyond the 2 GiB a random access reader addresses");
-        return (int) position;
+        _input = input;
+        _length = input.length();
     }
 
     @Override
@@ -77,8 +68,7 @@ final class SeekingSequentialReader extends SequentialReader
     private void fill() throws IOException
     {
         _bufferLength = (int) Math.min(BUFFER_SIZE, _length - _position);
-        byte[] bytes = _reader.getBytes(index(_position), _bufferLength);
-        System.arraycopy(bytes, 0, _buffer, 0, _bufferLength);
+        _input.read(_position, _buffer, 0, _bufferLength);
         _bufferStart = _position;
     }
 
@@ -97,7 +87,7 @@ final class SeekingSequentialReader extends SequentialReader
         if (count < 0 || _position + count > _length)
             throw new EOFException("End of data reached.");
         if (count > BUFFER_SIZE) {
-            System.arraycopy(_reader.getBytes(index(_position), count), 0, buffer, offset, count);
+            _input.read(_position, buffer, offset, count);
             _position += count;
             return;
         }

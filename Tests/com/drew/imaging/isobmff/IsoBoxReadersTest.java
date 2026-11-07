@@ -35,6 +35,7 @@ import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.SequenceInputStream;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -645,6 +646,49 @@ public class IsoBoxReadersTest
         } finally {
             assertTrue(file.delete());
         }
+    }
+
+    @Test
+    public void testAnInputOfAStreamReadsLikeTheStream() throws Exception
+    {
+        List<String> got = new ArrayList<String>();
+        byte[] file = join(box("mdat", new byte[] {1, 2, 3}), box("moov", box("stco", new byte[0])));
+        List<String> errors = new ArrayList<String>();
+        rangeRequester(got, true, 64, 9).read(IsoInput.of(new ByteArrayInputStream(file)), IsoBoxContext.root(new Metadata(), collect(errors)));
+        assertEquals(Collections.singletonList("mdat@9=2,3"), got);
+        assertTrue(errors.toString(), errors.isEmpty());
+    }
+
+    @Test
+    public void testRangesBeyondTwoGibAreReadByPositionFromAFile() throws Exception
+    {
+        // 'mdat' with a 64-bit size of 2.5 GiB, then 'moov'; the walk passes 'mdat' by position arithmetic alone
+        final long mdatSize = 2560L * 1024 * 1024;
+        final byte[] mdatHeader = ByteBuffer.allocate(16).putInt(1).put("mdat".getBytes("ISO-8859-1")).putLong(mdatSize).array();
+        final byte[] moov = box("moov", box("stco", new byte[0]));
+        IsoInput.Seekable input = new IsoInput.Seekable()
+        {
+            @Override
+            public long length()
+            {
+                return mdatSize + moov.length;
+            }
+
+            @Override
+            public void read(long position, @NotNull byte[] buffer, int offset, int count)
+            {
+                for (int i = 0; i < count; i++) {
+                    long at = position + i;
+                    buffer[offset + i] = at < 16 ? mdatHeader[(int) at] : at >= mdatSize ? moov[(int) (at - mdatSize)] : (byte) at;
+                }
+            }
+        };
+        List<String> got = new ArrayList<String>();
+        List<String> errors = new ArrayList<String>();
+        long offset = 2400L * 1024 * 1024 + 1;
+        rangeRequester(got, false, 64, offset).read(input, IsoBoxContext.root(new Metadata(), collect(errors)));
+        assertEquals(Collections.singletonList("file@" + offset + "=" + (offset & 0xff) + "," + ((offset + 1) & 0xff)), got);
+        assertTrue(errors.toString(), errors.isEmpty());
     }
 
     @Test

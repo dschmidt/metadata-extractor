@@ -26,6 +26,7 @@ import com.drew.imaging.cr3.Cr3MetadataReader;
 import com.drew.imaging.eps.EpsMetadataReader;
 import com.drew.imaging.gif.GifMetadataReader;
 import com.drew.imaging.heif.HeifMetadataReader;
+import com.drew.imaging.isobmff.IsoInput;
 import com.drew.imaging.ico.IcoMetadataReader;
 import com.drew.imaging.jpeg.JpegMetadataReader;
 import com.drew.imaging.ebml.EbmlMetadataReader;
@@ -235,19 +236,36 @@ public class ImageMetadataReader
         try {
             BufferedInputStream bufferedInputStream = new BufferedInputStream(inputStream);
             FileType fileType = FileTypeDetector.detectFileType(bufferedInputStream, file.getName());
-            if (fileType == FileType.Heif || fileType == FileType.Avif) {
-                // Item data can precede the boxes that locate it; a file is read by position for it
-                metadata = new Metadata();
-                HeifMetadataReader.extract(file, metadata);
-            } else {
+            metadata = readMetadata(file, fileType);
+            if (metadata == null)
                 metadata = readMetadata(bufferedInputStream, file.length(), fileType);
-            }
             metadata.addDirectory(new FileTypeDirectory(fileType));
         } finally {
             inputStream.close();
         }
         new FileSystemMetadataReader().read(file, metadata);
         return metadata;
+    }
+
+    /**
+     * Reads {@code file} by position, for the formats whose data can lie before the boxes that
+     * locate it, such as HEIF items in an {@code mdat} before {@code meta}; {@code null} for the
+     * formats that read a stream.
+     */
+    @Nullable
+    private static Metadata readMetadata(@NotNull final File file, @NotNull final FileType fileType) throws IOException
+    {
+        switch (fileType) {
+            case Heif:
+            case Avif:
+                return HeifMetadataReader.readMetadata(IsoInput.of(file));
+            case Mp4:
+                return Mp4MetadataReader.readMetadata(IsoInput.of(file));
+            case Crx:
+                return Cr3MetadataReader.readMetadata(IsoInput.of(file));
+            default:
+                return null;
+        }
     }
 
     private ImageMetadataReader() throws Exception

@@ -23,6 +23,7 @@ package com.drew.imaging.cr3;
 import com.drew.imaging.isobmff.IsoBoxContext;
 import com.drew.imaging.isobmff.IsoBoxReader;
 import com.drew.imaging.isobmff.IsoBoxReaders;
+import com.drew.imaging.isobmff.IsoInput;
 import com.drew.lang.SequentialReader;
 import com.drew.lang.annotations.NotNull;
 import com.drew.lang.annotations.Nullable;
@@ -31,7 +32,6 @@ import com.drew.metadata.cr3.Cr3Directory;
 import com.drew.metadata.file.FileSystemMetadataReader;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
@@ -54,16 +54,26 @@ import java.util.List;
  */
 public class Cr3MetadataReader
 {
+    /** Reads {@code input}; see {@link IsoInput} for the kinds of input. */
+    @NotNull
+    public static Metadata readMetadata(@NotNull IsoInput input) throws IOException
+    {
+        Metadata metadata = new Metadata();
+        extract(input, metadata);
+        return metadata;
+    }
+
+    /** Reads {@code input} into {@code metadata}; see {@link #readMetadata(IsoInput)}. */
+    public static void extract(@NotNull IsoInput input, @NotNull Metadata metadata) throws IOException
+    {
+        DEFAULT_READERS.read(input, newRoot(metadata, null));
+    }
+
+    /** Reads a file (see {@link #readMetadata(IsoInput)}) and the file system's metadata. */
     @NotNull
     public static Metadata readMetadata(@NotNull final File file) throws IOException
     {
-        InputStream inputStream = new FileInputStream(file);
-        Metadata metadata;
-        try {
-            metadata = readMetadata(inputStream);
-        } finally {
-            inputStream.close();
-        }
+        Metadata metadata = readMetadata(IsoInput.of(file));
         new FileSystemMetadataReader().read(file, metadata);
         return metadata;
     }

@@ -23,6 +23,7 @@ package com.drew.imaging.mp4;
 import com.drew.imaging.isobmff.IsoBoxContext;
 import com.drew.imaging.isobmff.IsoBoxReader;
 import com.drew.imaging.isobmff.IsoBoxReaders;
+import com.drew.imaging.isobmff.IsoInput;
 import com.drew.lang.annotations.NotNull;
 import com.drew.lang.annotations.Nullable;
 import com.drew.metadata.Metadata;
@@ -30,7 +31,6 @@ import com.drew.metadata.file.FileSystemMetadataReader;
 import com.drew.metadata.mp4.Mp4Directory;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
@@ -59,16 +59,26 @@ public class Mp4MetadataReader
         return new IsoBoxReaders(Mp4Readers.LAYOUT, readers);
     }
 
+    /** Reads {@code input}; a file or a random access reader is also read by position for sample data a reader asks for. */
+    @NotNull
+    public static Metadata readMetadata(@NotNull IsoInput input) throws IOException
+    {
+        Metadata metadata = new Metadata();
+        extract(input, metadata);
+        return metadata;
+    }
+
+    /** Reads {@code input} into {@code metadata}; see {@link #readMetadata(IsoInput)}. */
+    public static void extract(@NotNull IsoInput input, @NotNull Metadata metadata) throws IOException
+    {
+        DEFAULT_READERS.read(input, newRoot(metadata, null));
+    }
+
+    /** Reads a file (see {@link #readMetadata(IsoInput)}) and the file system's metadata. */
     @NotNull
     public static Metadata readMetadata(@NotNull final File file) throws IOException
     {
-        InputStream inputStream = new FileInputStream(file);
-        Metadata metadata;
-        try {
-            metadata = readMetadata(inputStream);
-        } finally {
-            inputStream.close();
-        }
+        Metadata metadata = readMetadata(IsoInput.of(file));
         new FileSystemMetadataReader().read(file, metadata);
         return metadata;
     }

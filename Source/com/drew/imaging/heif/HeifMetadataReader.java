@@ -23,6 +23,7 @@ package com.drew.imaging.heif;
 import com.drew.imaging.isobmff.IsoBoxContext;
 import com.drew.imaging.isobmff.IsoBoxReader;
 import com.drew.imaging.isobmff.IsoBoxReaders;
+import com.drew.imaging.isobmff.IsoInput;
 import com.drew.imaging.isobmff.IsoItems;
 import com.drew.imaging.isobmff.IsoStandardLayout;
 import com.drew.lang.RandomAccessStreamReader;
@@ -124,38 +125,40 @@ public class HeifMetadataReader
     }
 
     /**
-     * Reads {@code inputStream}. Item data that comes before {@code meta} is kept in memory
-     * until {@code meta} is read, up to {@link IsoBoxReaders#DEFAULT_MAX_BUFFERED_PAYLOAD};
-     * beyond that it is reported, and {@link #readMetadata(File)} reads it without buffering.
+     * Reads {@code input}. Item data that comes before {@code meta} is read by position from a
+     * file or a random access reader; from a stream it is kept in memory until {@code meta} is
+     * read, up to {@link IsoBoxReaders#DEFAULT_MAX_BUFFERED_PAYLOAD}, and reported beyond that.
      */
+    @NotNull
+    public static Metadata readMetadata(@NotNull IsoInput input) throws IOException
+    {
+        Metadata metadata = new Metadata();
+        extract(input, metadata);
+        return metadata;
+    }
+
+    /** Reads {@code input} into {@code metadata}; see {@link #readMetadata(IsoInput)}. */
+    public static void extract(@NotNull IsoInput input, @NotNull Metadata metadata) throws IOException
+    {
+        DEFAULT_READERS.read(input, newRoot(metadata, null));
+    }
+
+    /** Reads a stream; see {@link #readMetadata(IsoInput)}. */
     @NotNull
     public static Metadata readMetadata(@NotNull InputStream inputStream)
     {
         Metadata metadata = new Metadata();
-        extract(inputStream, metadata);
+        DEFAULT_READERS.read(inputStream, newRoot(metadata, null));
         return metadata;
     }
 
-    /** Reads {@code file}, with item data read by position wherever it lies, and the file system's metadata. */
+    /** Reads a file (see {@link #readMetadata(IsoInput)}) and the file system's metadata. */
     @NotNull
     public static Metadata readMetadata(@NotNull File file) throws IOException
     {
-        Metadata metadata = new Metadata();
-        extract(file, metadata);
+        Metadata metadata = readMetadata(IsoInput.of(file));
         new FileSystemMetadataReader().read(file, metadata);
         return metadata;
-    }
-
-    /** Reads {@code inputStream} into {@code metadata}; see {@link #readMetadata(InputStream)}. */
-    public static void extract(@NotNull InputStream inputStream, @NotNull Metadata metadata)
-    {
-        DEFAULT_READERS.read(inputStream, newRoot(metadata, null));
-    }
-
-    /** Reads {@code file} into {@code metadata}, with item data read by position wherever it lies. */
-    public static void extract(@NotNull File file, @NotNull Metadata metadata) throws IOException
-    {
-        DEFAULT_READERS.read(file, newRoot(metadata, null));
     }
 
     /**

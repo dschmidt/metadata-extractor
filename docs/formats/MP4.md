@@ -10,6 +10,11 @@ code alone is not enough to identify a payload's meaning.
 - Java: `Source/com/drew/imaging/mp4/Mp4Reader.java` traverses boxes using handlers
   in `Source/com/drew/metadata/mp4/`. The handler-based implementation chooses
   which boxes and containers to read; handler context controls media parsing.
+  `Mp4MetadataReader.readMetadata(IsoInput)` takes a stream, a file, or a
+  `RandomAccessReader`; `ImageMetadataReader.readMetadata(File)` reads MP4 as a
+  file. Sample data that `IsoSamples` asks for from an `mdat` before `moov` is
+  read by position from a file, and from a stream only while `mdat` fits
+  `IsoBoxReaders.DEFAULT_MAX_BUFFERED_PAYLOAD` (64 MiB).
 - .NET: MP4 metadata is read by
   `MetadataExtractor/Formats/QuickTime/QuickTimeMetadataReader.cs`.
   `MetadataExtractor/Formats/Iso14496/` contains box infrastructure used by the

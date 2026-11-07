@@ -20,7 +20,6 @@
  */
 package com.drew.imaging.isobmff;
 
-import com.drew.lang.RandomAccessReader;
 import com.drew.lang.SequentialByteArrayReader;
 import com.drew.lang.SequentialReader;
 import com.drew.lang.annotations.NotNull;
@@ -74,9 +73,8 @@ public final class IsoBoxContext
     /** The ranges asked for and not served yet, on the root only. */
     @Nullable
     Ranges _ranges;
-    /** The reader to read ranges by position with when the input allows it, on the root only. */
-    @Nullable
-    RandomAccessReader _seek;
+    /** Whether the walk can read ranges by position at the end, on the root only. */
+    boolean _seekable;
     /** The boxes kept for ranges (see {@link IsoBoxReader#getLocatingPaths}), on the root only. */
     @Nullable
     private List<Retained> _retained;
@@ -299,9 +297,8 @@ public final class IsoBoxContext
      * to {@code reader} when it passes that position inside a box no reader is registered for,
      * skipping everything else. A range in a box the walk has kept (see
      * {@link IsoBoxReader#getLocatingPaths}) is read at once. A range the walk has already passed
-     * is read by position at the end when the input allows that (see
-     * {@link IsoBoxReaders#read(java.io.File, IsoBoxContext)}), and stays pending otherwise; see
-     * {@link IsoBoxReaders#readRanges}.
+     * is read by position at the end when the input allows that (see {@link IsoInput}), and stays
+     * pending otherwise; see {@link IsoBoxReaders#readRanges}.
      */
     public void requestRange(long offset, long length, @NotNull RangeReader reader)
     {
