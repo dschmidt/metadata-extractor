@@ -31,6 +31,7 @@ import java.nio.ByteBuffer;
 
 import static org.junit.Assert.*;
 
+@SuppressWarnings("deprecation")
 public class BoxTest
 {
     @Test

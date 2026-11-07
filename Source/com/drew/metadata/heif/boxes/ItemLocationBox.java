@@ -27,7 +27,11 @@ import java.util.*;
 
 /**
  * ISO/IEC 14496-12:2015 pg.77-80
+ *
+ * @deprecated the HEIF reader no longer uses this class: {@link com.drew.imaging.isobmff.IsoItems}
+ * reads the item locations of {@code iloc} for it. To be removed in a future major version.
  */
+@Deprecated
 public class ItemLocationBox extends FullBox
 {
     int indexSize;

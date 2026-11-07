@@ -29,6 +29,7 @@ import static org.junit.Assert.*;
 /**
  * @author Drew Noakes https://drewnoakes.com
  */
+@SuppressWarnings("deprecation")
 public class ItemLocationBoxTest
 {
     /**

@@ -26,7 +26,11 @@ import java.io.IOException;
 
 /**
  * ISO/IEC 14496-12:2015 pg.80
+ *
+ * @deprecated the HEIF reader no longer uses this class: {@link com.drew.imaging.isobmff.IsoItems}
+ * reads {@code pitm}, which it reads but does not use for it. To be removed in a future major version.
  */
+@Deprecated
 public class PrimaryItemBox extends FullBox
 {
     long itemID;

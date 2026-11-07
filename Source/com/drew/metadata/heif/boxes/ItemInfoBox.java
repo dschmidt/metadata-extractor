@@ -31,7 +31,11 @@ import java.util.Map;
 
 /**
  * ISO/IEC 14496-12:2015 pg.81-83
+ *
+ * @deprecated the HEIF reader no longer uses this class: {@link com.drew.imaging.isobmff.IsoItems}
+ * reads the item entries of {@code iinf} for it. To be removed in a future major version.
  */
+@Deprecated
 public class ItemInfoBox extends FullBox
 {
     long entryCount;

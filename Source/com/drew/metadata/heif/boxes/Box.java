@@ -57,7 +57,7 @@ public class Box
     /**
      * The header of a box read by {@link IsoBoxIterator}, for the box classes of this package.
      * Pass it with {@link IsoBoxIterator#payload()}, whose positions start at 0 like those of a
-     * reader over the payload bytes, as classes such as {@link ItemInfoBox.ItemInfoEntry} expect.
+     * reader over the payload bytes, as classes such as {@link HandlerBox} expect.
      */
     public Box(@NotNull IsoBox box)
     {
