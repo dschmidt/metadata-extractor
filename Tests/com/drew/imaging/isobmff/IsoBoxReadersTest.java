@@ -564,7 +564,6 @@ public class IsoBoxReadersTest
         IsoBoxContext root = IsoBoxContext.root(new Metadata(), collect(errors));
         rangeRequester(got, true, 64, 9).read(new ByteArrayInputStream(file), root);
         assertEquals(Collections.singletonList("mdat@9=2,3"), got);
-        assertFalse(IsoBoxReaders.hasPendingRanges(root));
         assertTrue(errors.toString(), errors.isEmpty());
     }
 
@@ -604,15 +603,10 @@ public class IsoBoxReadersTest
         byte[] file = join(box("mdat", new byte[] {1, 2, 3}), box("moov", box("stco", new byte[0])));
         List<String> errors = new ArrayList<String>();
         IsoBoxContext root = IsoBoxContext.root(new Metadata(), collect(errors));
-        IsoBoxReaders readers = rangeRequester(got, true, 2, 9);
-        readers.read(new ByteArrayInputStream(file), root);
+        rangeRequester(got, true, 2, 9).read(new ByteArrayInputStream(file), root);
         assertTrue(got.isEmpty());
         assertEquals(1, errors.size());
         assertTrue(errors.get(0), errors.get(0).contains("not read"));
-        // a caller that can read the input again still can
-        readers.read(new IsoBoxIterator(new ByteArrayInputStream(file)), root);
-        readers.readRanges(new IsoBoxIterator(new ByteArrayInputStream(file)), root);
-        assertEquals(Collections.singletonList("mdat@9=2,3"), got);
     }
 
     @Test
@@ -639,7 +633,7 @@ public class IsoBoxReadersTest
             List<String> errors = new ArrayList<String>();
             IsoBoxContext root = IsoBoxContext.root(new Metadata(), collect(errors));
             // 'moov' is not named as locating, so nothing is kept; the file is read by position instead
-            rangeRequester(got, false, 64, 12, 9, 100).read(file, root);
+            rangeRequester(got, false, 64, 12, 9, 100).read(IsoInput.of(file), root);
             assertEquals(Arrays.asList("file@9=2,3", "file@12=5,6"), got);
             assertEquals(1, errors.size());
             assertTrue(errors.get(0), errors.get(0).contains("outside the input"));
@@ -703,7 +697,7 @@ public class IsoBoxReadersTest
             out.close();
             List<String> errors = new ArrayList<String>();
             // a limit of 2 would stop 'mdat' from being kept, but by position it is not needed
-            rangeRequester(got, true, 2, 9).read(file, IsoBoxContext.root(new Metadata(), collect(errors)));
+            rangeRequester(got, true, 2, 9).read(IsoInput.of(file), IsoBoxContext.root(new Metadata(), collect(errors)));
             assertEquals(Collections.singletonList("file@9=2,3"), got);
             assertTrue(errors.toString(), errors.isEmpty());
         } finally {
@@ -734,20 +728,16 @@ public class IsoBoxReadersTest
     }
 
     @Test
-    public void testRangesBeforeTheirLocationNeedASecondPass() throws Exception
+    public void testRangesBeforeTheirLocationAreReportedWhenNothingKeepsThem() throws Exception
     {
         List<String> got = new ArrayList<String>();
         byte[] file = join(box("mdat", new byte[] {1, 2, 3}), box("moov", box("stco", new byte[0])));
-        IsoBoxReaders readers = rangeRequester(got, 9);
         List<String> errors = new ArrayList<String>();
-        IsoBoxContext root = IsoBoxContext.root(new Metadata(), collect(errors));
-        readers.read(new IsoBoxIterator(new ByteArrayInputStream(file)), root);
+        // 'moov' is not named as locating, so 'mdat' is passed unread and the range cannot be served
+        rangeRequester(got, 9).read(new ByteArrayInputStream(file), IsoBoxContext.root(new Metadata(), collect(errors)));
         assertTrue(got.isEmpty());
-        assertTrue(IsoBoxReaders.hasPendingRanges(root));
-        readers.readRanges(new IsoBoxIterator(new ByteArrayInputStream(file)), root);
-        assertEquals(Collections.singletonList("mdat@9=2,3"), got);
-        assertFalse(IsoBoxReaders.hasPendingRanges(root));
-        assertTrue(errors.isEmpty());
+        assertEquals(1, errors.size());
+        assertTrue(errors.get(0), errors.get(0).contains("1 range of data (2 bytes, from input offset 9) not read"));
     }
 
     @Test(expected = IllegalArgumentException.class)

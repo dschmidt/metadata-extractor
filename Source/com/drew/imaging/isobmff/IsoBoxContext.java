@@ -297,8 +297,8 @@ public final class IsoBoxContext
      * to {@code reader} when it passes that position inside a box no reader is registered for,
      * skipping everything else. A range in a box the walk has kept (see
      * {@link IsoBoxReader#getLocatingPaths}) is read at once. A range the walk has already passed
-     * is read by position at the end when the input allows that (see {@link IsoInput}), and stays
-     * pending otherwise; see {@link IsoBoxReaders#readRanges}.
+     * is read by position at the end when the input allows that (see {@link IsoInput}), and is
+     * reported as not read otherwise.
      */
     public void requestRange(long offset, long length, @NotNull RangeReader reader)
     {

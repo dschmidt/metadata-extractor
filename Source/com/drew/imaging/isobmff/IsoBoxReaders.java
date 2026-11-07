@@ -20,13 +20,11 @@
  */
 package com.drew.imaging.isobmff;
 
-import com.drew.lang.RandomAccessReader;
 import com.drew.lang.SequentialByteArrayReader;
 import com.drew.lang.SequentialReader;
 import com.drew.lang.annotations.NotNull;
 import com.drew.lang.annotations.Nullable;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.RandomAccessFile;
@@ -154,8 +152,7 @@ public final class IsoBoxReaders
      * the walk passed their box are served from the boxes it kept (see
      * {@link IsoBoxReader#getLocatingPaths}). A file or a random access reader is read by
      * position for such ranges at the end instead, so nothing is kept. Ranges that could not be
-     * read either way are reported as errors; to read them from a stream a second time, see
-     * {@link #readRanges}.
+     * read either way are reported as errors.
      *
      * @throws IOException if a file cannot be opened or closed; problems in the data are reported
      *                     to the file context's error handler, not thrown
@@ -180,19 +177,16 @@ public final class IsoBoxReaders
     public void read(@NotNull InputStream inputStream, @NotNull IsoBoxContext root)
     {
         read(new IsoBoxIterator(inputStream), root);
+    }
+
+    /**
+     * Reads {@code boxes} like a stream (see {@link #read(IsoInput, IsoBoxContext)}), starting from
+     * the file context {@code root} (see {@link IsoBoxContext#root}).
+     */
+    public void read(@NotNull IsoBoxIterator boxes, @NotNull IsoBoxContext root)
+    {
+        walk(boxes, root);
         reportPendingRanges(root);
-    }
-
-    /** Reads a file; see {@link #read(IsoInput, IsoBoxContext)}. */
-    public void read(@NotNull File file, @NotNull IsoBoxContext root) throws IOException
-    {
-        read(IsoInput.of(file), root);
-    }
-
-    /** Reads a random access reader; see {@link #read(IsoInput, IsoBoxContext)}. */
-    public void read(@NotNull RandomAccessReader reader, @NotNull IsoBoxContext root) throws IOException
-    {
-        read(IsoInput.of(reader), root);
     }
 
     /** Reads {@code input} once from the start, then the pending ranges by position. */
@@ -200,7 +194,7 @@ public final class IsoBoxReaders
     {
         root._seekable = true;
         try {
-            read(new IsoBoxIterator(new SeekingSequentialReader(input), input.length()), root);
+            walk(new IsoBoxIterator(new SeekingSequentialReader(input), input.length()), root);
             if (!root._stopped && hasPendingRanges(root))
                 seekRanges(input, root);
         } finally {
@@ -232,14 +226,8 @@ public final class IsoBoxReaders
         }
     }
 
-    /**
-     * Reads {@code boxes}, starting from the file context {@code root} (see
-     * {@link IsoBoxContext#root}).
-     * Ranges asked for that came before the boxes that located them, and that the walk did not
-     * keep, stay pending (see {@link #hasPendingRanges}): follow with {@link #readRanges} over a
-     * second pass, or with {@link #reportPendingRanges}.
-     */
-    public void read(@NotNull IsoBoxIterator boxes, @NotNull IsoBoxContext root)
+    /** Walks {@code boxes} from the top level; ranges not served stay pending on {@code root}. */
+    private void walk(@NotNull IsoBoxIterator boxes, @NotNull IsoBoxContext root)
     {
         root._nodes = _root.self;
         root._readers = this;
@@ -253,25 +241,14 @@ public final class IsoBoxReaders
         }
     }
 
-    /**
-     * Reads {@code boxes}, a second pass over the same input, for the pending ranges only, then
-     * reports those still not served.
-     */
-    public void readRanges(@NotNull IsoBoxIterator boxes, @NotNull IsoBoxContext root)
-    {
-        root._readers = this;
-        new Walk().walk(boxes, root, NOWHERE);
-        reportPendingRanges(root);
-    }
-
     /** Whether ranges asked for are still unserved. */
-    public static boolean hasPendingRanges(@NotNull IsoBoxContext root)
+    private static boolean hasPendingRanges(@NotNull IsoBoxContext root)
     {
         return root._ranges != null && !root._ranges.isEmpty();
     }
 
     /** Reports the ranges still unserved as one error and forgets them. */
-    public static void reportPendingRanges(@NotNull IsoBoxContext root)
+    private static void reportPendingRanges(@NotNull IsoBoxContext root)
     {
         if (!hasPendingRanges(root))
             return;
