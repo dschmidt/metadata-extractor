@@ -28,6 +28,20 @@ memory until `meta` is read, up to `IsoBoxReaders.DEFAULT_MAX_BUFFERED_PAYLOAD`
 (64 MiB), and reports the items as not read beyond that. With `meta` before
 `mdat`, the usual order, nothing is buffered either way.
 
+Java, deferred to a future major version (public API, so not changed in a minor
+release):
+
+- Remove `ItemInfoBox`, `ItemLocationBox`, `PrimaryItemBox` and
+  `ItemProtectionBox` from `com.drew.metadata.heif.boxes`, deprecated since
+  `IsoItems` reads `iinf` and `iloc`; move the `ItemLocationBoxTest` cases
+  (`offset_size` or `length_size` of 0) to a test of `IsoItems` first.
+- Remove or redirect `HeifBoxTypes`, `HeifContainerTypes` and `HeifItemTypes`:
+  the path readers name boxes by path literal and nothing reads the constants.
+- Move `Box` and `FullBox` from `com.drew.metadata.heif.boxes` to
+  `com.drew.imaging.isobmff`, where `IsoBoxLayout`, `IsoStandardLayout` and the
+  MP4 readers use them; Java has no re-export, so a deprecated subclass at the
+  old name would keep only the old-to-new assignment direction working.
+
 This document migrates a reference, not a verified feature inventory. Do not
 infer equivalent item, property, Exif, XMP, thumbnail, or transformation support
 from the shared format name. Compare the same sample bytes and the applicable
