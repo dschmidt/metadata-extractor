@@ -7,28 +7,25 @@ depending on their enclosing media or metadata handler.
 
 ## Implementation mapping
 
-- Java: `Source/com/drew/imaging/quicktime/QuickTimeReaders.java` registers
+- Java: QuickTime files are read by the MP4 readers; see
+  [ISO base media / MP4](MP4.md). `Source/com/drew/imaging/mp4/Mp4Readers.java`
+  reads QuickTime's atoms into the directories of `Source/com/drew/metadata/mp4/`
+  and the shared `QuickTimeMetadataDirectory`, and `ImageMetadataReader` tells
+  QuickTime from MP4 only to choose the file type it reports.
+  `Source/com/drew/imaging/quicktime/QuickTimeMetadataReader.java` and the
+  directories and atom classes of `Source/com/drew/metadata/mov/` are deprecated,
+  all but `QuickTimeMetadataDirectory`, which both readers fill. They keep
+  working as they are until the next major version: `QuickTimeReaders` registers
   readers by atom path on the shared ISO base media walk
-  (`com.drew.imaging.isobmff`, layout `QuickTimeLayout`), and the atom classes in
-  `Source/com/drew/metadata/mov/atoms/` decode the payloads into the directories
-  of `Source/com/drew/metadata/mov/`. A track's `mdia/hdlr` component type
-  chooses its media directory (`vide`, `soun`, `tmcd`, `text`, `sbtl`, `musi`);
-  a `meta` atom's `hdlr` chooses between `mdta` keys and values and an `mdir`
-  iTunes-style list. The latest `mdhd` dates the media directories and gives the
-  time scale of `stts`, as the earlier handler-based reader did.
-  `QuickTimeMetadataReader.readMetadata(IsoInput)` takes a stream, a file, or a
-  `RandomAccessReader`; `ImageMetadataReader.readMetadata(File)` reads QuickTime
-  as a file. The default readers give an Apple Live Photo's movie a
-  `QuickTimeLivePhotoDirectory` with the still image time: the `mebx` track keyed
-  `com.apple.quicktime.still-image-time` holds one sample, and the empty edit
-  before it in `elst` is the moment the photo was taken, in the movie's time
-  scale; without an empty edit the photo is the first frame, and a track with
-  more than one sample gives no time. This reads `moov` alone.
-  `QuickTimeMetadataReader.LIVE_PHOTO_TRANSFORM_READER`, not among the defaults,
-  adds the transform from the video frame to the photo and its reference
-  dimensions from that sample. Apple writes `mdat` before `moov`, so give it a
-  file, or expect the walk to keep `mdat` in memory up to the buffer limit when
-  reading a stream.
+  (`com.drew.imaging.isobmff`, layout `QuickTimeLayout`), and the atom classes
+  decode the payloads. A track's `mdia/hdlr` component type chooses its media
+  directory (`vide`, `soun`, `tmcd`, `text`, `sbtl`, `musi`); a `meta` atom's
+  `hdlr` chooses between `mdta` keys and values and an `mdir` iTunes-style list.
+  The latest `mdhd` dates the media directories and gives the time scale of
+  `stts`, as the earlier handler-based reader did. The deprecated directories
+  keep the tags they have and gain none; new tags, and the Live Photo directory,
+  exist only in the MP4 directories. `ImageMetadataReader` keeps giving QuickTime
+  files the deprecated directories until the major version.
 - .NET: `MetadataExtractor/Formats/QuickTime/` uses callbacks for traversal and
   metadata extraction. This reader also handles MP4 metadata.
 
@@ -37,14 +34,22 @@ Shared container terminology does not imply equivalent supported tags or media
 properties. Compare those individually against the specification and identical
 inputs before claiming a capability gap.
 
+## Java-only behavior
+
+- The deprecated `QuickTimeVideoDirectory` takes its frame rate from the first
+  entry of `stts`, so a track that starts with an odd frame duration reports an
+  odd rate; `Mp4VideoDirectory` averages over the media's duration.
+- The deprecated directories format dates with a numeric offset
+  (`+00:00`), the MP4 directories with `UTC`.
+
 ## References
 
 - [QuickTime file format specification](https://developer.apple.com/library/archive/documentation/QuickTime/QTFF/)
 - [Media data structures](https://developer.apple.com/library/archive/documentation/QuickTime/QTFF/QTFFChap3/qtff3.html)
 - [Metadata atoms](https://developer.apple.com/library/archive/documentation/QuickTime/QTFF/Metadata/Metadata.html)
 
-[ISO base media / MP4](MP4.md) describes the related box format and the different
-Java/.NET package layouts.
+[ISO base media / MP4](MP4.md) describes the related box format, what is read from
+QuickTime files, and the different Java/.NET package layouts.
 
 [Canon CR3](CR3.md) describes the Canon-specific metadata also read by the .NET
 QuickTime implementation.
