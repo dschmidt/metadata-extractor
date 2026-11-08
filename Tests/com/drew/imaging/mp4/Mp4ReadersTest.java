@@ -138,6 +138,26 @@ public class Mp4ReadersTest
     }
 
     @Test
+    public void testEachTrackIsDatedFromItsOwnMediaHeader() throws Exception
+    {
+        long first = EPOCH_1904 + 1000;
+        long second = EPOCH_1904 + 2000;
+        // the first track has 'mdhd' before 'hdlr', the second after it, the third has none
+        byte[] video = box("trak", box("mdia", mediaHeader(first, first, 600, 600), handler("vide")));
+        byte[] sound = box("trak", box("mdia", handler("soun"), mediaHeader(second, second, 48000, 48000),
+            box("minf", box("stbl", box("stts", int32(0), int32(1), int32(48000), int32(1))))));
+        byte[] text = box("trak", box("mdia", handler("text")));
+        Metadata metadata = Mp4MetadataReader.readMetadata(new ByteArrayInputStream(concat(ftyp("qt  "), box("moov", video, sound, text))));
+
+        assertEquals(1000 * 1000L, metadata.getFirstDirectoryOfType(Mp4VideoDirectory.class).getDate(Mp4MediaDirectory.TAG_CREATION_TIME).getTime());
+        Mp4SoundDirectory soundDirectory = metadata.getFirstDirectoryOfType(Mp4SoundDirectory.class);
+        assertEquals(2000 * 1000L, soundDirectory.getDate(Mp4MediaDirectory.TAG_CREATION_TIME).getTime());
+        assertEquals(48000d, soundDirectory.getDouble(Mp4SoundDirectory.TAG_AUDIO_SAMPLE_RATE), 0d);
+        assertNull(metadata.getFirstDirectoryOfType(Mp4TextDirectory.class).getDate(Mp4MediaDirectory.TAG_CREATION_TIME));
+        assertNoErrors(metadata);
+    }
+
+    @Test
     public void testTheHandlerChoosesTheDirectoryOfTimecodeTextAndSubtitleTracks() throws Exception
     {
         byte[] tcmi = box("tcmi", int32(0), int16(1), int16(0x0001), int16(12), int16(0), int16(1), int16(2), int16(3), int16(4), int16(5), int16(6), new byte[] {5}, ascii("Arial"));

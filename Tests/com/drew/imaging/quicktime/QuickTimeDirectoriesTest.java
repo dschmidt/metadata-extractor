@@ -46,7 +46,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 @SuppressWarnings("deprecation")
-public class QuickTimeReadersTest
+public class QuickTimeDirectoriesTest
 {
     /** Seconds from 1904 to the Unix epoch, the base of QuickTime's times. */
     private static final long EPOCH_1904 = 2082844800L;
@@ -171,6 +171,23 @@ public class QuickTimeReadersTest
         assertEquals(2000 * 1000L, soundDirectory.getDate(QuickTimeMediaDirectory.TAG_CREATION_TIME).getTime());
         assertEquals(48000d, soundDirectory.getDouble(QuickTimeSoundDirectory.TAG_AUDIO_SAMPLE_RATE), 0d);
         assertNull(metadata.getFirstDirectoryOfType(QuickTimeTextDirectory.class).getDate(QuickTimeMediaDirectory.TAG_CREATION_TIME));
+        assertNoErrors(metadata);
+    }
+
+    /** The old reader took the frame rate from the first 'stts' entry alone, and the MP4 directories are not handed out. */
+    @Test
+    public void testTheFrameRateComesFromTheFirstEntryAndOnlyQuickTimeDirectoriesRemain() throws Exception
+    {
+        byte[] video = box("trak", box("mdia", mediaHeader(EPOCH_1904, EPOCH_1904, 600, 1200), handler("vide"),
+            // 2 frames of 600 ticks, then 10 of 60: the average is 10 a second, the first entry says 1
+            box("minf", box("stbl", box("stts", int32(0), int32(2), int32(2), int32(600), int32(10), int32(60))))));
+        byte[] hint = box("trak", box("mdia", mediaHeader(EPOCH_1904, EPOCH_1904, 600, 1200), handler("hint")));
+        Metadata metadata = QuickTimeMetadataReader.readMetadata(new ByteArrayInputStream(concat(ftyp(), box("moov", video, hint))));
+
+        assertEquals(1f, metadata.getFirstDirectoryOfType(QuickTimeVideoDirectory.class).getFloat(QuickTimeVideoDirectory.TAG_FRAME_RATE), 0f);
+        for (Directory directory : metadata.getDirectories())
+            assertTrue(directory.getName(), directory.getName().startsWith("QuickTime"));
+        assertEquals(2, ((Collection<?>) metadata.getDirectories()).size());
         assertNoErrors(metadata);
     }
 

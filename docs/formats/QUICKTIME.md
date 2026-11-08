@@ -13,19 +13,17 @@ depending on their enclosing media or metadata handler.
   and the shared `QuickTimeMetadataDirectory`, and `ImageMetadataReader` tells
   QuickTime from MP4 only to choose the file type it reports.
   `Source/com/drew/imaging/quicktime/QuickTimeMetadataReader.java` and the
-  directories and atom classes of `Source/com/drew/metadata/mov/` are deprecated,
-  all but `QuickTimeMetadataDirectory`, which both readers fill. They keep
-  working as they are until the next major version: `QuickTimeReaders` registers
-  readers by atom path on the shared ISO base media walk
-  (`com.drew.imaging.isobmff`, layout `QuickTimeLayout`), and the atom classes
-  decode the payloads. A track's `mdia/hdlr` component type chooses its media
-  directory (`vide`, `soun`, `tmcd`, `text`, `sbtl`, `musi`); a `meta` atom's
-  `hdlr` chooses between `mdta` keys and values and an `mdir` iTunes-style list.
-  The latest `mdhd` dates the media directories and gives the time scale of
-  `stts`, as the earlier handler-based reader did. The deprecated directories
-  keep the tags they have and gain none; new tags, and the Live Photo directory,
-  exist only in the MP4 directories. `ImageMetadataReader` keeps giving QuickTime
-  files the deprecated directories until the major version.
+  directories of `Source/com/drew/metadata/mov/` are deprecated, all but
+  `QuickTimeMetadataDirectory`, which both readers fill. The deprecated reader
+  is an adapter: it runs the MP4 readers and `QuickTimeDirectories` copies what
+  they read into the old directories, whose tags have the same names under other
+  numbers. Tracks the old reader had no directory for (hint, timed metadata,
+  `uuid` boxes) and the Live Photo directory are left out, and the video frame
+  rate is recomputed the old way, from the first `stts` entry alone. On the
+  image corpus the adapter's output is byte-identical to the former QuickTime
+  reader's. The deprecated directories keep the tags they have and gain none;
+  `ImageMetadataReader` keeps giving QuickTime files the deprecated directories
+  until the major version.
 - .NET: `MetadataExtractor/Formats/QuickTime/` uses callbacks for traversal and
   metadata extraction. This reader also handles MP4 metadata.
 

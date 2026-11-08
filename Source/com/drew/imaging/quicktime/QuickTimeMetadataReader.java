@@ -25,9 +25,9 @@ import com.drew.imaging.isobmff.IsoBoxContext;
 import com.drew.imaging.isobmff.IsoBoxReader;
 import com.drew.imaging.isobmff.IsoBoxReaders;
 import com.drew.imaging.isobmff.IsoInput;
+import com.drew.imaging.isobmff.QuickTimeLayout;
 import com.drew.imaging.mp4.Mp4MetadataReader;
 import com.drew.lang.annotations.NotNull;
-import com.drew.lang.annotations.Nullable;
 import com.drew.metadata.Metadata;
 import com.drew.metadata.file.FileSystemMetadataReader;
 import com.drew.metadata.mov.QuickTimeDirectory;
@@ -35,11 +35,14 @@ import com.drew.metadata.mov.QuickTimeDirectory;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
- * Obtains metadata from QuickTime files into the directories of {@code com.drew.metadata.mov},
- * with box readers registered by path; see {@link IsoBoxReaders} for how boxes are walked.
+ * Obtains metadata from QuickTime files into the directories of {@code com.drew.metadata.mov}.
+ * The MP4 readers do the reading; what they read is copied into the old directories, which
+ * carry the same tags under other numbers.
  *
  * @deprecated {@link Mp4MetadataReader} reads QuickTime files as well, into the directories of
  * {@code com.drew.metadata.mp4}, and is where new tags are added; the QuickTime directories
@@ -51,10 +54,19 @@ import java.util.List;
 public class QuickTimeMetadataReader
 {
     /**
-     * The readers {@link #readMetadata(IsoInput)} uses. Pass them, with readers of your own, to
-     * {@link #compile} to read further boxes.
+     * The readers {@link #readMetadata(IsoInput)} uses: those of {@link Mp4MetadataReader}, and
+     * one that computes the video frame rate as this reader always did. Pass them, with readers
+     * of your own, to {@link #compile} to read further boxes; your readers see the MP4
+     * directories, which are copied into the QuickTime ones once the file is read.
      */
-    public static final List<IsoBoxReader> ALL_READERS = QuickTimeReaders.ALL_READERS;
+    public static final List<IsoBoxReader> ALL_READERS;
+
+    static
+    {
+        List<IsoBoxReader> readers = new ArrayList<IsoBoxReader>(Mp4MetadataReader.ALL_READERS);
+        readers.add(QuickTimeDirectories.FIRST_ENTRY_FRAME_RATE);
+        ALL_READERS = Collections.unmodifiableList(readers);
+    }
 
     private static final IsoBoxReaders DEFAULT_READERS = compile(ALL_READERS);
 
@@ -62,7 +74,7 @@ public class QuickTimeMetadataReader
     @NotNull
     public static IsoBoxReaders compile(@NotNull Iterable<? extends IsoBoxReader> readers)
     {
-        return new IsoBoxReaders(QuickTimeReaders.LAYOUT, readers);
+        return new IsoBoxReaders(QuickTimeLayout.INSTANCE, readers);
     }
 
     /** Reads {@code input}; see {@link IsoInput} for the kinds of input. */
@@ -79,14 +91,18 @@ public class QuickTimeMetadataReader
     public static Metadata readMetadata(@NotNull IsoInput input, @NotNull Iterable<? extends IsoBoxReader> readers) throws IOException
     {
         Metadata metadata = new Metadata();
-        compile(readers).read(input, newRoot(metadata, null));
+        Reading reading = new Reading(metadata);
+        compile(readers).read(input, reading.root);
+        reading.finish(metadata);
         return metadata;
     }
 
     /** Reads {@code input} into {@code metadata}; see {@link #readMetadata(IsoInput)}. */
     public static void extract(@NotNull IsoInput input, @NotNull Metadata metadata) throws IOException
     {
-        DEFAULT_READERS.read(input, newRoot(metadata, null));
+        Reading reading = new Reading(metadata);
+        DEFAULT_READERS.read(input, reading.root);
+        reading.finish(metadata);
     }
 
     /** Reads a stream; see {@link #readMetadata(IsoInput)}. */
@@ -94,7 +110,9 @@ public class QuickTimeMetadataReader
     public static Metadata readMetadata(@NotNull InputStream inputStream)
     {
         Metadata metadata = new Metadata();
-        DEFAULT_READERS.read(inputStream, newRoot(metadata, null));
+        Reading reading = new Reading(metadata);
+        DEFAULT_READERS.read(inputStream, reading.root);
+        reading.finish(metadata);
         return metadata;
     }
 
@@ -108,16 +126,25 @@ public class QuickTimeMetadataReader
     }
 
     /**
-     * The file context for reading into {@code metadata}: it adds a {@link QuickTimeDirectory}.
-     * Problems go to {@code errors}, or to the {@link QuickTimeDirectory} when it is {@code null}.
+     * One read: the MP4 readers fill directories of their own, into which problems also go by
+     * way of the {@link QuickTimeDirectory}; {@link #finish} then copies everything over.
      */
-    @NotNull
-    public static IsoBoxContext newRoot(@NotNull Metadata metadata, @Nullable IsoBoxContext.ErrorHandler errors)
+    private static final class Reading
     {
-        QuickTimeDirectory directory = new QuickTimeDirectory();
-        metadata.addDirectory(directory);
-        IsoBoxContext root = errors == null ? IsoBoxContext.root(metadata, directory) : IsoBoxContext.root(metadata, errors);
-        root.put(QuickTimeDirectory.class, directory);
-        return root;
+        final QuickTimeDirectory directory = new QuickTimeDirectory();
+        final Metadata read = new Metadata();
+        final IsoBoxContext root;
+
+        Reading(@NotNull Metadata metadata)
+        {
+            metadata.addDirectory(directory);
+            root = IsoBoxContext.root(read, directory);
+            Mp4MetadataReader.prepare(root);
+        }
+
+        void finish(@NotNull Metadata metadata)
+        {
+            QuickTimeDirectories.convert(read, metadata, directory);
+        }
     }
 }

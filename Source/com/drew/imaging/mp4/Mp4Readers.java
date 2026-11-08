@@ -181,14 +181,23 @@ final class Mp4Readers
                 String handlerType = IsoStandardLayout.handlerType(box);
                 if ("meta".equals(handlerType))
                     timedMetadata(box);
-                Mp4MediaDirectory media = mediaDirectory(handlerType);
+                final Mp4MediaDirectory media = mediaDirectory(handlerType);
                 if (media == null)
                     return;
-                MediaHeader header = box.get(MediaHeader.class);
-                if (header != null)
-                    header.apply(media);
                 box.metadata().addDirectory(media);
-                box.parent().put(Mp4MediaDirectory.class, media);
+                IsoBoxContext mdia = box.parent();
+                mdia.put(Mp4MediaDirectory.class, media);
+                // the track's own 'mdhd' dates it, whichever of the two comes first
+                mdia.whenDone(new IsoBoxReaders.Callback()
+                {
+                    @Override
+                    public void read(@NotNull IsoBoxContext done)
+                    {
+                        MediaHeader header = done.get(MediaHeader.class);
+                        if (header != null)
+                            header.apply(media);
+                    }
+                });
             }
         }, MEDIA + "hdlr"),
         on(new IsoBoxReaders.Callback()
