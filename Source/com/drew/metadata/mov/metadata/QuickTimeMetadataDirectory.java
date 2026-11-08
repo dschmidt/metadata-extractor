@@ -210,6 +210,7 @@ public class QuickTimeMetadataDirectory extends QuickTimeDirectory
         _tagIntegerMap.put("©too", 0x044F);
         _tagIntegerMap.put("©trk", 0x0450);
         _tagIntegerMap.put("©wrt", 0x0451);
+        _tagIntegerMap.put("xid ", 0x0452);
 
         _tagNameMap.put(TAG_ALBUM, "Album");
         _tagNameMap.put(TAG_ARTIST, "Artist");
@@ -327,6 +328,7 @@ public class QuickTimeMetadataDirectory extends QuickTimeDirectory
         _tagNameMap.put(0x044F, "Encoder");
         _tagNameMap.put(0x0450, "Track");
         _tagNameMap.put(0x0451, "Composer");
+        _tagNameMap.put(0x0452, "Vendor Identifier");
     }
 
     @Override

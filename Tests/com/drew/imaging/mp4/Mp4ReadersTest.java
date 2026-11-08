@@ -305,7 +305,8 @@ public class Mp4ReadersTest
             box("cpil", box("data", int32(0), int32(0), new byte[] {1})),
             box("gnre", box("data", int32(0), int32(0), int16(18))),
             box("covr", box("data", int32(13), int32(0), new byte[] {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF})),
-            box("©day", box("data", int32(1), int32(0), ascii("2005"))));
+            box("©day", box("data", int32(1), int32(0), ascii("2005"))),
+            box("xid ", box("data", int32(1), int32(0), ascii("Label:isrc:USABC0500001"))));
         byte[] meta = box("meta", int32(0), handler("mdir"), ilst);
         Metadata metadata = Mp4MetadataReader.readMetadata(new ByteArrayInputStream(concat(ftyp("M4A "), box("moov", box("udta", meta)))));
 
@@ -317,6 +318,7 @@ public class Mp4ReadersTest
         assertEquals(18, directory.getInt(QuickTimeMetadataDirectory.getTagType("gnre")));
         assertEquals(3, directory.getByteArray(QuickTimeMetadataDirectory.getTagType("covr")).length);
         assertEquals("2005", directory.getString(QuickTimeMetadataDirectory.getTagType("©day")));
+        assertEquals("Label:isrc:USABC0500001", directory.getString(QuickTimeMetadataDirectory.getTagType("xid ")));
         assertNoErrors(metadata);
     }
 
