@@ -246,6 +246,15 @@ public class Mp4ReadersTest
             box("minf", box("stbl", box("stsd", int32(0), int32(1), videoEntry)))));
         Metadata metadata = Mp4MetadataReader.readMetadata(new ByteArrayInputStream(concat(ftyp("isom"), box("moov", sound, video))));
 
+        // a bare FairPlay entry without a sinf: the entry type is the scheme and stays the format
+        byte[] drmsEntry = box("drms", new byte[8], int16(0), int16(0), int32(0), int16(2), int16(16), int16(0), int16(0), int32(44100 << 16));
+        byte[] protectedSound = box("trak", box("mdia", mediaHeader(EPOCH_1904, EPOCH_1904, 44100, 44100), handler("soun"),
+            box("minf", box("stbl", box("stsd", int32(0), int32(1), drmsEntry)))));
+        Mp4SoundDirectory drms = Mp4MetadataReader.readMetadata(new ByteArrayInputStream(concat(ftyp("M4A "), box("moov", protectedSound))))
+            .getFirstDirectoryOfType(Mp4SoundDirectory.class);
+        assertEquals("drms", drms.getString(Mp4MediaDirectory.TAG_PROTECTION_SCHEME));
+        assertEquals("drms", drms.getString(Mp4SoundDirectory.TAG_AUDIO_FORMAT_RAW));
+
         Mp4SoundDirectory soundDirectory = metadata.getFirstDirectoryOfType(Mp4SoundDirectory.class);
         assertEquals(192000, soundDirectory.getLong(Mp4SoundDirectory.TAG_MAX_BITRATE));
         assertEquals(128000, soundDirectory.getLong(Mp4SoundDirectory.TAG_AVERAGE_BITRATE));

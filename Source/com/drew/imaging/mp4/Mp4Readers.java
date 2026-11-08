@@ -479,6 +479,9 @@ final class Mp4Readers
         reader.skip(4);
         String format = reader.getString(4);
         reader.skip(8);
+        // a protected entry names its scheme in sinf/schm, which overrides the entry type set here
+        if (PROTECTED_FORMATS.contains(format))
+            media.setString(Mp4MediaDirectory.TAG_PROTECTION_SCHEME, format);
         if (media instanceof Mp4TextDirectory) {
             readTextSampleEntry(reader, (Mp4TextDirectory) media);
             return;
@@ -1008,8 +1011,6 @@ final class Mp4Readers
                 Mp4Dictionary.setLookup(Mp4VideoDirectory.TAG_COMPRESSION_TYPE, original, media);
                 media.setString(Mp4VideoDirectory.TAG_COMPRESSION_TYPE_RAW, original);
             }
-            if (!media.containsTag(Mp4MediaDirectory.TAG_PROTECTION_SCHEME))
-                media.setString(Mp4MediaDirectory.TAG_PROTECTION_SCHEME, entry.box().type);
         } else if (type.equals("schm")) {
             payload.skip(4); // version and flags
             media.setString(Mp4MediaDirectory.TAG_PROTECTION_SCHEME, payload.getString(4));

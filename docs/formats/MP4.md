@@ -65,9 +65,9 @@ No exhaustive MP4 feature-parity check is implied by this documentation migratio
   the maximum and average bitrate of a sound track from the `esds` decoder
   configuration (also nested in QuickTime's `wave`), of a video track from
   `btrt`; for a protected entry (`enca`, `encv`, `drms`, `drmi`, …) the
-  original format from `sinf/frma` replaces the entry type in the format tags,
-  and `sinf/schm` gives the protection scheme (`cenc`, `cbcs`, …), or the
-  entry type when there is no `schm`.
+  entry type is the protection scheme until `sinf/schm` names one (`cenc`,
+  `cbcs`, …), and the original format from `sinf/frma` replaces the entry type
+  in the format tags.
   A four-character code that is not printable ASCII is described as the hex of
   its bytes.
 - `XMP_` anywhere a file-level atom can be adds an XMP directory; Canon's `CNTH`
