@@ -78,6 +78,8 @@ public final class IsoBoxContext
     /** The boxes kept for ranges (see {@link IsoBoxReader#getLocatingPaths}), on the root only. */
     @Nullable
     private List<Retained> _retained;
+    /** How many problems were reported for the file, on the root only; see {@link #MAX_ERRORS}. */
+    private int _errorsReported;
     /** How many of the walk's locating boxes have not been read yet, on the root only. */
     int _locatingLeft;
     /** Which of the walk's locating boxes have been read, by index, on the root only. */
@@ -185,14 +187,29 @@ public final class IsoBoxContext
         return _metadata;
     }
 
+    /**
+     * How many problems a walk reports per file; after that, one notice that the rest are
+     * dropped, so a file with a problem in every box does not report every box.
+     */
+    public static final int MAX_ERRORS = 100;
+
     public void addError(@NotNull String message)
     {
-        _errors.error(_box, message, null);
+        report(message, null);
     }
 
     void addError(@NotNull String message, @NotNull IOException cause)
     {
-        _errors.error(_box, message, cause);
+        report(message, cause);
+    }
+
+    private void report(@NotNull String message, @Nullable IOException cause)
+    {
+        int reported = ++_root._errorsReported;
+        if (reported <= MAX_ERRORS)
+            _errors.error(_box, message, cause);
+        else if (reported == MAX_ERRORS + 1)
+            _errors.error(null, "More than " + MAX_ERRORS + " problems in this file; the rest are not reported", null);
     }
 
     /**

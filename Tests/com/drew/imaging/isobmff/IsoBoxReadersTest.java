@@ -556,6 +556,27 @@ public class IsoBoxReadersTest
     }
 
     @Test
+    public void testProblemsBeyondTheLimitAreDropped() throws Exception
+    {
+        IsoBoxReader boom = IsoBoxReaders.on(new IsoBoxReaders.Callback()
+        {
+            @Override
+            public void read(@NotNull IsoBoxContext box) throws IOException
+            {
+                throw new IOException("bad");
+            }
+        }, "bad!");
+        byte[][] boxes = new byte[IsoBoxContext.MAX_ERRORS + 50][];
+        for (int i = 0; i < boxes.length; i++)
+            boxes[i] = box("bad!", new byte[0]);
+        List<String> errors = new ArrayList<String>();
+        new IsoBoxReaders(PLAIN, Collections.singletonList(boom)).read(new ByteArrayInputStream(join(boxes)), IsoBoxContext.root(new Metadata(), collect(errors)));
+        assertEquals(IsoBoxContext.MAX_ERRORS + 1, errors.size());
+        assertTrue(errors.get(0), errors.get(0).startsWith("Error reading box 'bad!': bad"));
+        assertTrue(errors.get(IsoBoxContext.MAX_ERRORS), errors.get(IsoBoxContext.MAX_ERRORS).contains("the rest are not reported"));
+    }
+
+    @Test
     public void testBoxesBeforeALocatingBoxAreKeptForItsRanges() throws Exception
     {
         List<String> got = new ArrayList<String>();
