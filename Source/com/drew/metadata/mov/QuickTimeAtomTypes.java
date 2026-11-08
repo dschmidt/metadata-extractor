@@ -24,7 +24,9 @@ import java.util.ArrayList;
 
 /**
  * @author Payton Garland
+ * @deprecated see {@link com.drew.metadata.mp4} and {@link com.drew.imaging.mp4.Mp4MetadataReader}, which reads QuickTime files too; the QuickTime directories keep the tags they have and gain none.
  */
+@Deprecated
 public class QuickTimeAtomTypes
 {
     public static final String ATOM_FILE_TYPE                = "ftyp";

@@ -27,7 +27,9 @@ import java.util.HashMap;
 
 /**
  * @author Payton Garland
+ * @deprecated the directories of {@code com.drew.metadata.mp4}, filled by {@link com.drew.imaging.mp4.Mp4MetadataReader} from QuickTime files too, are where new tags are added; this one keeps the tags it has. {@link com.drew.metadata.mov.metadata.QuickTimeMetadataDirectory}, which extends it, stays.
  */
+@Deprecated
 public class QuickTimeDirectory extends Directory {
 
     // Movie Header Atom (https://developer.apple.com/library/content/documentation/QuickTime/QTFF/QTFFChap2/qtff2.html#//apple_ref/doc/uid/TP40000939-CH204-56313)

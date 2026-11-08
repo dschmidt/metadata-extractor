@@ -26,7 +26,9 @@ import java.util.HashMap;
 
 /**
  * @author Payton Garland
+ * @deprecated see {@link com.drew.metadata.mp4} and {@link com.drew.imaging.mp4.Mp4MetadataReader}, which reads QuickTime files too; the QuickTime directories keep the tags they have and gain none.
  */
+@Deprecated
 public abstract class QuickTimeMediaDirectory extends QuickTimeDirectory
 {
     public static final int TAG_CREATION_TIME = 0x5001;

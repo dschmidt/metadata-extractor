@@ -27,7 +27,9 @@ import static com.drew.metadata.mov.media.QuickTimeVideoDirectory.*;
 
 /**
  * @author Payton Garland
+ * @deprecated see {@link com.drew.metadata.mp4} and {@link com.drew.imaging.mp4.Mp4MetadataReader}, which reads QuickTime files too; the QuickTime directories keep the tags they have and gain none.
  */
+@Deprecated
 public class QuickTimeVideoDescriptor extends QuickTimeDescriptor
 {
     public QuickTimeVideoDescriptor(@NotNull QuickTimeVideoDirectory directory)

@@ -29,7 +29,9 @@ import java.io.IOException;
  * https://developer.apple.com/library/content/documentation/QuickTime/QTFF/QTFFChap3/qtff3.html#//apple_ref/doc/uid/TP40000939-CH205-BBCBEAGJ
  *
  * @author Payton Garland
+ * @deprecated the readers of {@link com.drew.imaging.mp4.Mp4MetadataReader} read this atom into the directories of {@code com.drew.metadata.mp4}.
  */
+@Deprecated
 public class TimecodeInformationMediaAtom extends FullAtom
 {
     int textFont;

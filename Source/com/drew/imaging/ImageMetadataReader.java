@@ -159,6 +159,7 @@ public class ImageMetadataReader
      * @throws ImageProcessingException if the file type is unknown, or for general processing errors.
      */
     @NotNull
+    @SuppressWarnings("deprecation") // QuickTime files keep their directories until the next major version
     public static Metadata readMetadata(@NotNull final InputStream inputStream, final long streamLength, final FileType fileType) throws IOException, ImageProcessingException
     {
         switch (fileType) {
@@ -253,6 +254,7 @@ public class ImageMetadataReader
      * formats that read a stream.
      */
     @Nullable
+    @SuppressWarnings("deprecation") // QuickTime files keep their directories until the next major version
     private static Metadata readMetadata(@NotNull final File file, @NotNull final FileType fileType) throws IOException
     {
         switch (fileType) {

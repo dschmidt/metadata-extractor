@@ -30,7 +30,9 @@ import java.util.ArrayList;
  * https://developer.apple.com/library/content/documentation/QuickTime/QTFF/QTFFChap1/qtff1.html#//apple_ref/doc/uid/TP40000939-CH203-CJBCBIFF
  *
  * @author Payton Garland
+ * @deprecated the readers of {@link com.drew.imaging.mp4.Mp4MetadataReader} read this atom into the directories of {@code com.drew.metadata.mp4}.
  */
+@Deprecated
 public class FileTypeCompatibilityAtom extends Atom
 {
     String majorBrand;

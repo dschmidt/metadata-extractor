@@ -25,6 +25,7 @@ import com.drew.imaging.isobmff.IsoBoxContext;
 import com.drew.imaging.isobmff.IsoBoxReader;
 import com.drew.imaging.isobmff.IsoBoxReaders;
 import com.drew.imaging.isobmff.IsoInput;
+import com.drew.imaging.mp4.Mp4MetadataReader;
 import com.drew.lang.annotations.NotNull;
 import com.drew.lang.annotations.Nullable;
 import com.drew.metadata.Metadata;
@@ -40,8 +41,13 @@ import java.util.List;
  * Obtains metadata from QuickTime files into the directories of {@code com.drew.metadata.mov},
  * with box readers registered by path; see {@link IsoBoxReaders} for how boxes are walked.
  *
+ * @deprecated {@link Mp4MetadataReader} reads QuickTime files as well, into the directories of
+ * {@code com.drew.metadata.mp4}, and is where new tags are added; the QuickTime directories
+ * keep the tags they have. {@link com.drew.metadata.mov.metadata.QuickTimeMetadataDirectory},
+ * which both fill, stays.
  * @author Payton Garland
  */
+@Deprecated
 public class QuickTimeMetadataReader
 {
     /**

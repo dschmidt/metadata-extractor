@@ -20,6 +20,8 @@
  */
 package com.drew.metadata.mov;
 
+/** @deprecated used by the deprecated QuickTime atom classes only. */
+@Deprecated
 public class QuickTimeContext
 {
     public Long creationTime;

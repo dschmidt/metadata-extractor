@@ -45,6 +45,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+@SuppressWarnings("deprecation")
 public class QuickTimeReadersTest
 {
     /** Seconds from 1904 to the Unix epoch, the base of QuickTime's times. */

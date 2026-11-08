@@ -29,7 +29,9 @@ import java.nio.charset.StandardCharsets;
  * https://developer.apple.com/library/content/documentation/QuickTime/QTFF/QTFFChap2/qtff2.html#//apple_ref/doc/uid/TP40000939-CH204-BBCIBHFD
  *
  * @author Payton Garland
+ * @deprecated the readers of {@link com.drew.imaging.mp4.Mp4MetadataReader} read this atom into the directories of {@code com.drew.metadata.mp4}.
  */
+@Deprecated
 public class HandlerReferenceAtom extends FullAtom
 {
     public String getComponentType()

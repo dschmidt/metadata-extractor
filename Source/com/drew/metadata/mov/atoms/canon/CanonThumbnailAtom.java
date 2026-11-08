@@ -26,7 +26,9 @@ import com.drew.metadata.mov.atoms.Atom;
 /**
  *
  * @author PerB
+ * @deprecated the readers of {@link com.drew.imaging.mp4.Mp4MetadataReader} read this atom into the directories of {@code com.drew.metadata.mp4}.
  */
+@Deprecated
 public class CanonThumbnailAtom extends Atom
 {
     @Nullable
