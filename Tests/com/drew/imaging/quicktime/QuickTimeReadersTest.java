@@ -76,6 +76,30 @@ public class QuickTimeReadersTest
     }
 
     @Test
+    public void testIntegerAndDoubleValueTypesAreRead() throws Exception
+    {
+        // 21: a signed integer of 2 bytes; 77: an unsigned 32-bit; 24: a double; 78: an unsigned 64-bit
+        byte[] meta = box("meta",
+            handler("mdta"),
+            box("keys", int32(0), int32(4), key("com.apple.quicktime.rating.user"), key("com.apple.quicktime.direction.facing"),
+                key("com.apple.quicktime.direction.motion"), key("com.apple.quicktime.pixeldensity")),
+            box("ilst",
+                box(int32(1), box("data", int32(21), int32(0), int16(-2))),
+                box(int32(2), box("data", int32(77), int32(0), int32(0xFFFFFFF0L))),
+                box(int32(3), box("data", int32(24), int32(0), ByteBuffer.allocate(8).putDouble(26.5).array())),
+                box(int32(4), box("data", int32(78), int32(0), int32(1), int32(2)))));
+        Metadata metadata = QuickTimeMetadataReader.readMetadata(new ByteArrayInputStream(concat(ftyp(), box("moov", meta))));
+
+        QuickTimeMetadataDirectory directory = metadata.getFirstDirectoryOfType(QuickTimeMetadataDirectory.class);
+        assertNotNull(directory);
+        assertEquals(-2, directory.getInt(QuickTimeMetadataDirectory.getTagType("com.apple.quicktime.rating.user")));
+        assertEquals(0xFFFFFFF0L, directory.getLong(QuickTimeMetadataDirectory.getTagType("com.apple.quicktime.direction.facing")));
+        assertEquals(26.5, directory.getDouble(QuickTimeMetadataDirectory.getTagType("com.apple.quicktime.direction.motion")), 0d);
+        assertEquals((1L << 32) + 2, directory.getLong(QuickTimeMetadataDirectory.getTagType("com.apple.quicktime.pixeldensity")));
+        assertNoErrors(metadata);
+    }
+
+    @Test
     public void testITunesListFillsTheMetadataDirectory() throws Exception
     {
         // 'udta/meta' is a FullBox, unlike QuickTime's 'moov/meta'

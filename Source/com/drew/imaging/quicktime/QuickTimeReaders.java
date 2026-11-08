@@ -385,6 +385,24 @@ final class QuickTimeReaders
         }
     }
 
+    /**
+     * A big-endian integer of {@code length} bytes, up to 8: an {@code int} when it fits one as
+     * the {@code mdta} integer types were read before, else a {@code long}.
+     */
+    private static void setInteger(@NotNull QuickTimeMetadataDirectory directory, int tag, @NotNull SequentialReader reader,
+                                   int length, boolean signed) throws IOException
+    {
+        if (length < 1 || length > 8)
+            return;
+        long value = signed ? reader.getInt8() : reader.getUInt8();
+        for (int i = 1; i < length; i++)
+            value = (value << 8) | reader.getUInt8();
+        if (length <= 4 && (signed || length < 4))
+            directory.setInt(tag, (int) value);
+        else
+            directory.setLong(tag, value);
+    }
+
     private static void readData(@NotNull IsoBoxContext box) throws IOException
     {
         Meta meta = box.get(Meta.class);
@@ -425,10 +443,22 @@ final class QuickTimeReaders
             case 27:
                 meta.directory.setByteArray(tag, reader.getBytes(length));
                 break;
-            case 22:
-                byte[] buf = new byte[4];
-                reader.getBytes(buf, 4 - length, length);
-                meta.directory.setInt(tag, new SequentialByteArrayReader(buf).getInt32());
+            case 21: // BE signed integer of 1, 2, 4 or 8 bytes
+            case 65: // BE signed 8-bit
+            case 66: // BE signed 16-bit
+            case 67: // BE signed 32-bit
+            case 74: // BE signed 64-bit
+                setInteger(meta.directory, tag, reader, length, true);
+                break;
+            case 22: // BE unsigned integer of 1, 2, 4 or 8 bytes
+            case 75: // BE unsigned 8-bit
+            case 76: // BE unsigned 16-bit
+            case 77: // BE unsigned 32-bit
+            case 78: // BE unsigned 64-bit
+                setInteger(meta.directory, tag, reader, length, false);
+                break;
+            case 24:
+                meta.directory.setDouble(tag, reader.getDouble64());
                 break;
             case 23:
                 meta.directory.setFloat(tag, reader.getFloat32());
