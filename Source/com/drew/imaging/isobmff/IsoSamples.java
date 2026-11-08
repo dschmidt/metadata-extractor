@@ -42,8 +42,8 @@ import java.util.Set;
  * <p>
  * {@link #readers} reads the tracks and their sample tables, and the track runs of each
  * fragment, and once {@code moov} is read asks the walk for the samples of the tracks a
- * {@link SampleReader} accepts (see {@link IsoBoxContext#requestRange}). Edit lists are not
- * applied.
+ * {@link SampleReader} accepts (see {@link IsoBoxContext#requestRange}). Each sample carries its
+ * decoding time and, from the track's edit list, the time at which it is presented.
  */
 public final class IsoSamples
 {
@@ -78,6 +78,11 @@ public final class IsoSamples
         long[] chunkRuns;
         @Nullable
         long[] timeRuns;
+        /** The edit list: pairs of segment duration in the movie's time scale and media time, -1 for an empty edit. */
+        @Nullable
+        long[] edits;
+        @Nullable
+        byte[] sampleEntry;
         long defaultSampleDuration;
         long defaultSampleSize;
         int samples;
@@ -86,6 +91,17 @@ public final class IsoSamples
         boolean capped;
 
         Track() {}
+
+        /**
+         * The first sample entry of {@code stsd} after its size and type: six reserved bytes and
+         * the data reference index, then the fields and boxes of the format, such as the
+         * {@code keys} of a {@code mebx} entry; up to 64 KiB. {@code null} before {@code stsd} is read.
+         */
+        @Nullable
+        public byte[] getSampleEntry()
+        {
+            return sampleEntry;
+        }
 
         /** The handler type from {@code mdia/hdlr}, such as {@code vide}, {@code soun}, {@code text} or {@code meta}. */
         @Nullable
@@ -145,14 +161,16 @@ public final class IsoSamples
     {
         private final int _index;
         private final long _time;
+        private final long _presentationTime;
         private final long _duration;
         private final long _offset;
         private final long _size;
 
-        Sample(int index, long time, long duration, long offset, long size)
+        Sample(int index, long time, long presentationTime, long duration, long offset, long size)
         {
             _index = index;
             _time = time;
+            _presentationTime = presentationTime;
             _duration = duration;
             _offset = offset;
             _size = size;
@@ -164,10 +182,21 @@ public final class IsoSamples
             return _index;
         }
 
-        /** The decoding time, in the track's time scale. */
+        /** The decoding time, in the track's time scale: the sample's position in the media, before any edit list. */
         public long getTime()
         {
             return _time;
+        }
+
+        /**
+         * The time at which the sample is presented, in the track's time scale, with the track's
+         * edit list applied: an empty edit at the start delays it, an edit starting inside the
+         * media advances it. The same as {@link #getTime} without an edit list, and -1 when no
+         * edit presents the sample.
+         */
+        public long getPresentationTime()
+        {
+            return _presentationTime;
         }
 
         /** The duration, in the track's time scale. */
@@ -237,8 +266,13 @@ public final class IsoSamples
     {
         final List<Track> all = new ArrayList<Track>();
         final Map<Long, Track> byId = new HashMap<Long, Track>();
+        /** The movie's time scale from {@code mvhd}, in which edit lists give their segment durations. */
+        long movieTimescale;
         boolean requested;
     }
+
+    /** The most of a sample entry kept for {@link Track#getSampleEntry}. */
+    private static final int MAX_SAMPLE_ENTRY = 64 * 1024;
 
     /** Where the samples of a track fragment are, from {@code tfhd}; on the {@code traf} context. */
     private static final class Fragment
@@ -268,7 +302,8 @@ public final class IsoSamples
     @NotNull
     public static IsoBoxReader readers(@NotNull final SampleReader reader, final int maxSamples)
     {
-        final List<String> paths = Arrays.asList(TRAK + "tkhd", TRAK + "tref/*", TRAK + "mdia/mdhd", TRAK + "mdia/hdlr",
+        final List<String> paths = Arrays.asList("moov/mvhd", TRAK + "tkhd", TRAK + "tref/*", TRAK + "edts/elst",
+            TRAK + "mdia/mdhd", TRAK + "mdia/hdlr",
             STBL + "stsd", STBL + "stts", STBL + "stsc", STBL + "stsz", STBL + "stz2", STBL + "stco", STBL + "co64",
             "moov/mvex/trex", "moof/traf/tfhd", "moof/traf/tfdt", "moof/traf/trun");
         return new IsoBoxReader()
@@ -305,7 +340,10 @@ public final class IsoSamples
                 int version = payload.getUInt8();
                 int flags = payload.getUInt16() << 8 | payload.getUInt8();
                 String type = box.box().type;
-                if (type.equals("trex")) {
+                if (type.equals("mvhd")) {
+                    payload.skip(version == 1 ? 16 : 8);
+                    tracks.movieTimescale = payload.getUInt32();
+                } else if (type.equals("trex")) {
                     Track track = tracks.byId.get(payload.getUInt32());
                     if (track != null) {
                         payload.skip(4);
@@ -419,10 +457,22 @@ public final class IsoSamples
             track.handlerType = payload.getString(4);
         } else if (type.equals("stsd")) {
             if (payload.getUInt32() > 0) {
-                payload.skip(4);
+                long entrySize = payload.getUInt32();
                 track.format = payload.getString(4);
+                if (entrySize >= 8)
+                    track.sampleEntry = payload.getBytes((int) Math.min(Math.min(entrySize - 8, remaining(box)), MAX_SAMPLE_ENTRY));
             }
             track.wanted = reader.accepts(track);
+        } else if (type.equals("elst")) {
+            int entrySize = version == 1 ? 20 : 12;
+            int count = (int) Math.min(Math.min(payload.getUInt32(), maxSamples), remaining(box) / entrySize);
+            long[] edits = new long[count * 2];
+            for (int i = 0; i < count; i++) {
+                edits[i * 2] = version == 1 ? payload.getInt64() : payload.getUInt32();
+                edits[i * 2 + 1] = version == 1 ? payload.getInt64() : payload.getInt32();
+                payload.skip(4); // media rate
+            }
+            track.edits = edits;
         } else if (!Boolean.FALSE.equals(track.wanted)) {
             readTable(box, payload, type, track, maxSamples);
         }
@@ -567,7 +617,7 @@ public final class IsoSamples
                     if (timeLeft > 0)
                         timeLeft--;
                     long size = sizes.get(track.samples);
-                    request(box, track, new Sample(track.samples++, track.time, duration, offset, size), reader);
+                    request(box, track, sample(box, track, duration, offset, size), reader);
                     track.time += duration;
                     offset += size;
                 }
@@ -677,7 +727,7 @@ public final class IsoSamples
             if ((flags & 0x800) != 0)
                 payload.skip(4);
             if (track != null && !track.lost && track.samples < maxSamples) {
-                request(box, track, new Sample(track.samples++, track.time, duration, offset, size), reader);
+                request(box, track, sample(box, track, duration, offset, size), reader);
                 track.time += duration;
             }
             offset += size;
@@ -692,6 +742,49 @@ public final class IsoSamples
         fragment.next = offset;
         movie.nextDataOffset = offset;
         movie.located = fragment.located;
+    }
+
+    /** The track's next sample, at its current time, presented as its edit list says. */
+    @NotNull
+    private static Sample sample(@NotNull IsoBoxContext box, @NotNull Track track, long duration, long offset, long size)
+    {
+        Tracks tracks = box.root().get(Tracks.class);
+        long movieTimescale = tracks == null ? 0 : tracks.movieTimescale;
+        return new Sample(track.samples++, track.time, presentationTime(track, movieTimescale, track.time), duration, offset, size);
+    }
+
+    /**
+     * The time at which a sample decoded at {@code time} is presented, in the track's time scale,
+     * by the track's edit list: the sum of the edits before the one holding the sample, plus the
+     * sample's distance into that edit. A segment duration of 0 runs to the end. Without an edit
+     * list, {@code time}; -1 when no edit presents the sample.
+     */
+    static long presentationTime(@NotNull Track track, long movieTimescale, long time)
+    {
+        long[] edits = track.edits;
+        if (edits == null)
+            return time;
+        long offset = 0;
+        for (int i = 0; i < edits.length; i += 2) {
+            long duration = toTrackTime(edits[i], track.timescale, movieTimescale);
+            long mediaTime = edits[i + 1];
+            if (mediaTime >= 0 && time >= mediaTime && (duration == 0 || time - mediaTime < duration))
+                return offset + (time - mediaTime);
+            if (duration == 0)
+                break;
+            offset += duration;
+        }
+        return -1;
+    }
+
+    /** {@code movieTime} in the track's time scale; unchanged when either scale is unknown. */
+    private static long toTrackTime(long movieTime, long trackTimescale, long movieTimescale)
+    {
+        if (trackTimescale <= 0 || movieTimescale <= 0 || movieTime <= 0)
+            return movieTime;
+        if (movieTime > Long.MAX_VALUE / trackTimescale)
+            return (long) ((double) movieTime * trackTimescale / movieTimescale);
+        return movieTime * trackTimescale / movieTimescale;
     }
 
     private static void request(@NotNull IsoBoxContext box, @NotNull final Track track, @NotNull final Sample sample,

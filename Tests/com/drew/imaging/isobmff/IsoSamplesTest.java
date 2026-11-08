@@ -35,6 +35,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
@@ -96,6 +97,69 @@ public class IsoSamplesTest
         read(file(false), recorder, errors);
         assertEquals(Arrays.asList("1:0=aa", "1:1=bbb", "1:2=c"), recorder.samples);
         assertTrue(errors.isEmpty());
+    }
+
+    @Test
+    public void testPresentationTimeFollowsTheEditList() throws Exception
+    {
+        IsoSamples.Track track = new IsoSamples.Track();
+        track.timescale = 600;
+        // no edit list: presented as decoded
+        assertEquals(42, IsoSamples.presentationTime(track, 600, 42));
+        // an empty edit of 880 movie ticks, then the media from its start: a Live Photo's still image track
+        track.edits = new long[] {880, -1, 1, 0};
+        assertEquals(880, IsoSamples.presentationTime(track, 600, 0));
+        assertEquals(-1, IsoSamples.presentationTime(track, 600, 1));
+        // the movie's time scale differs from the track's: 880 ticks of 1000 a second are 528 of 600
+        assertEquals(528, IsoSamples.presentationTime(track, 1000, 0));
+        // an edit starting inside the media advances the samples after it; those before it are not presented
+        track.edits = new long[] {0, 300};
+        assertEquals(-1, IsoSamples.presentationTime(track, 600, 100));
+        assertEquals(50, IsoSamples.presentationTime(track, 600, 350));
+        // a segment duration of 0 runs to the end
+        track.edits = new long[] {100, 0, 0, 100};
+        assertEquals(99, IsoSamples.presentationTime(track, 600, 99));
+        assertEquals(100 + 5000, IsoSamples.presentationTime(track, 600, 5100));
+    }
+
+    @Test
+    public void testSamplesCarryTheirPresentationTimeAndTheTrackItsSampleEntry() throws Exception
+    {
+        final List<String> got = new ArrayList<String>();
+        final byte[][] entry = new byte[1][];
+        IsoSamples.SampleReader recorder = new IsoSamples.SampleReader()
+        {
+            @Override
+            public boolean accepts(@NotNull IsoSamples.Track track)
+            {
+                entry[0] = track.getSampleEntry();
+                return "mebx".equals(track.getFormat());
+            }
+
+            @Override
+            public void readSample(@NotNull IsoBoxContext file, @NotNull IsoSamples.Track track, @NotNull IsoSamples.Sample sample, @NotNull SequentialReader data) throws IOException
+            {
+                got.add(sample.getTime() + "->" + sample.getPresentationTime() + "=" + data.getString((int) sample.getSize()));
+            }
+        };
+        // mvhd at 1000 ticks a second, the track at 600; an empty edit of 500 movie ticks before the media: 300 track ticks
+        byte[] mvhd = box("mvhd", new byte[4], int32(0), int32(0), int32(1000), int32(0));
+        byte[] mdhd = box("mdhd", new byte[4], int32(0), int32(0), int32(600), int32(0), int32(0));
+        byte[] elst = box("elst", new byte[4], int32(2), int32(500), int32(-1), int32(0x10000), int32(0), int32(0), int32(0x10000));
+        byte[] stsd = box("stsd", new byte[4], int32(1), box("mebx", new byte[8], box("keys", new byte[] {1, 2, 3})));
+        byte[] stts = box("stts", new byte[4], int32(1), int32(2), int32(10));
+        byte[] stsc = box("stsc", new byte[4], int32(1), int32(1), int32(2), int32(1));
+        byte[] stsz = box("stsz", new byte[4], int32(0), int32(2), int32(2), int32(3));
+        byte[] hdlr = box("hdlr", new byte[8], ascii("meta"), new byte[13]);
+        byte[] probe = box("moov", mvhd, box("trak", box("edts", elst), box("mdia", mdhd, hdlr, box("minf", box("stbl", stsd, stts, stsc, stsz, box("stco", new byte[4], int32(1), int32(0)))))));
+        int data = probe.length + 8;
+        byte[] moov = box("moov", mvhd, box("trak", box("edts", elst), box("mdia", mdhd, hdlr, box("minf", box("stbl", stsd, stts, stsc, stsz, box("stco", new byte[4], int32(1), int32(data)))))));
+        List<String> errors = new ArrayList<String>();
+        read(join(moov, box("mdat", ascii("aabbb"))), recorder, errors);
+
+        assertEquals(Arrays.asList("0->300=aa", "10->310=bbb"), got);
+        assertArrayEquals(join(new byte[8], box("keys", new byte[] {1, 2, 3})), entry[0]);
+        assertTrue(errors.toString(), errors.isEmpty());
     }
 
     @Test

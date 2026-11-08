@@ -14,7 +14,9 @@ code alone is not enough to identify a payload's meaning.
   `RandomAccessReader`; `ImageMetadataReader.readMetadata(File)` reads MP4 as a
   file. Sample data that `IsoSamples` asks for from an `mdat` before `moov` is
   read by position from a file, and from a stream only while `mdat` fits
-  `IsoBoxReaders.DEFAULT_MAX_BUFFERED_PAYLOAD` (64 MiB).
+  `IsoBoxReaders.DEFAULT_MAX_BUFFERED_PAYLOAD` (64 MiB). Each sample carries its
+  decoding time and its presentation time from the track's edit list (`elst`);
+  composition offsets (`ctts`) are not read.
 - .NET: MP4 metadata is read by
   `MetadataExtractor/Formats/QuickTime/QuickTimeMetadataReader.cs`.
   `MetadataExtractor/Formats/Iso14496/` contains box infrastructure used by the

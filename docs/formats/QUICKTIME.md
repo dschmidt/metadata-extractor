@@ -18,7 +18,13 @@ depending on their enclosing media or metadata handler.
   time scale of `stts`, as the earlier handler-based reader did.
   `QuickTimeMetadataReader.readMetadata(IsoInput)` takes a stream, a file, or a
   `RandomAccessReader`; `ImageMetadataReader.readMetadata(File)` reads QuickTime
-  as a file.
+  as a file. `QuickTimeMetadataReader.LIVE_PHOTO_READER`, not among the default
+  readers, reads the still image time of an Apple Live Photo's movie into
+  `QuickTimeLivePhotoDirectory`: the one sample of the `mebx` track keyed
+  `com.apple.quicktime.still-image-time`, presented where its edit list says,
+  with the still image transform and its reference dimensions. Apple writes
+  `mdat` before `moov`, so give it a file, or expect the walk to keep `mdat` in
+  memory up to the buffer limit when reading a stream.
 - .NET: `MetadataExtractor/Formats/QuickTime/` uses callbacks for traversal and
   metadata extraction. This reader also handles MP4 metadata.
 

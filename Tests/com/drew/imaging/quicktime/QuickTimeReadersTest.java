@@ -20,10 +20,13 @@
  */
 package com.drew.imaging.quicktime;
 
+import com.drew.imaging.isobmff.IsoBoxReader;
 import com.drew.imaging.isobmff.IsoInput;
+import com.drew.lang.Rational;
 import com.drew.metadata.Directory;
 import com.drew.metadata.Metadata;
 import com.drew.metadata.mov.QuickTimeDirectory;
+import com.drew.metadata.mov.media.QuickTimeLivePhotoDirectory;
 import com.drew.metadata.mov.media.QuickTimeMediaDirectory;
 import com.drew.metadata.mov.media.QuickTimeSoundDirectory;
 import com.drew.metadata.mov.media.QuickTimeTextDirectory;
@@ -35,8 +38,11 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -158,6 +164,64 @@ public class QuickTimeReadersTest
 
         assertNotNull(metadata.getFirstDirectoryOfType(QuickTimeVideoDirectory.class));
         assertNoErrors(metadata);
+    }
+
+    @Test
+    public void testTheLivePhotoReaderReadsTheStillImageTimeFromTheMetadataTrack() throws Exception
+    {
+        // the still image time track: one sample of one tick, presented at 880 of 600 ticks a second by the edit list
+        byte[] keys = box("keys",
+            box(int32(1), box("keyd", ascii("mdta"), ascii("com.apple.quicktime.still-image-time"))),
+            box(int32(2), box("keyd", ascii("mdta"), ascii("com.apple.quicktime.live-photo-still-image-transform"))),
+            box(int32(3), box("keyd", ascii("mdta"), ascii("com.apple.quicktime.live-photo-still-image-transform-reference-dimensions"))));
+        ByteBuffer transform = ByteBuffer.allocate(72);
+        for (double value : new double[] {1, 0, 4.5, 0, 1, -4.75, 0, 0, 1})
+            transform.putDouble(value);
+        byte[] sample = concat(
+            concat(int32(9), int32(1), new byte[] {(byte) 0xff}),
+            concat(int32(8 + 72), int32(2), transform.array()),
+            concat(int32(16), int32(3), ByteBuffer.allocate(8).putFloat(1920f).putFloat(1440f).array()));
+        byte[] elst = box("elst", int32(0), int32(2), int32(880), int32(-1), int32(0x10000), int32(1), int32(0), int32(0x10000));
+        byte[] mvhd = box("mvhd", int32(0), int32(0), int32(0), int32(600), int32(881), new byte[80]);
+        byte[] file = livePhotoFile(mvhd, elst, keys, sample);
+
+        List<IsoBoxReader> readers = new ArrayList<IsoBoxReader>(QuickTimeMetadataReader.ALL_READERS);
+        readers.add(QuickTimeMetadataReader.LIVE_PHOTO_READER);
+        Metadata metadata = QuickTimeMetadataReader.readMetadata(IsoInput.of(new ByteArrayInputStream(file)), readers);
+
+        QuickTimeLivePhotoDirectory directory = metadata.getFirstDirectoryOfType(QuickTimeLivePhotoDirectory.class);
+        assertNotNull(directory);
+        Rational time = directory.getRational(QuickTimeLivePhotoDirectory.TAG_STILL_IMAGE_TIME);
+        assertNotNull(time);
+        assertEquals(880, time.getNumerator());
+        assertEquals(600, time.getDenominator());
+        assertEquals("1.467 seconds", directory.getDescription(QuickTimeLivePhotoDirectory.TAG_STILL_IMAGE_TIME));
+        assertEquals("1920 x 1440", directory.getDescription(QuickTimeLivePhotoDirectory.TAG_STILL_IMAGE_REFERENCE_DIMENSIONS));
+        assertEquals(4.5, ((double[]) directory.getObject(QuickTimeLivePhotoDirectory.TAG_STILL_IMAGE_TRANSFORM))[2], 0d);
+        assertNoErrors(metadata);
+
+        // the reader is not among the defaults
+        assertNull(QuickTimeMetadataReader.readMetadata(new ByteArrayInputStream(file)).getFirstDirectoryOfType(QuickTimeLivePhotoDirectory.class));
+    }
+
+    /** 'ftyp', a 'moov' with the movie header and one 'mebx' track whose edit list is {@code elst}, then an 'mdat' holding {@code sample}. */
+    private static byte[] livePhotoFile(byte[] mvhd, byte[] elst, byte[] keys, byte[] sample)
+    {
+        byte[] probe = concat(ftyp(), livePhotoMovie(mvhd, elst, keys, sample.length, 0));
+        return concat(ftyp(), livePhotoMovie(mvhd, elst, keys, sample.length, probe.length + 8), box("mdat", sample));
+    }
+
+    private static byte[] livePhotoMovie(byte[] mvhd, byte[] elst, byte[] keys, int sampleSize, int sampleOffset)
+    {
+        byte[] stsd = box("stsd", int32(0), int32(1), box("mebx", new byte[8], keys));
+        byte[] stbl = box("stbl", stsd,
+            box("stts", int32(0), int32(1), int32(1), int32(1)),
+            box("stsc", int32(0), int32(1), int32(1), int32(1), int32(1)),
+            box("stsz", int32(0), int32(sampleSize), int32(1)),
+            box("stco", int32(0), int32(1), int32(sampleOffset)));
+        byte[] trak = box("trak", box("tkhd", int32(0), int32(0), int32(0), int32(3), new byte[72]), box("edts", elst),
+            box("mdia", mediaHeader(EPOCH_1904, EPOCH_1904, 600, 1), handler("meta"), box("minf", stbl)));
+        return box("moov", mvhd, trak);
     }
 
     @Test

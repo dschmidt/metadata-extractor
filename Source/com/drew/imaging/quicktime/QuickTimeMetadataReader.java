@@ -25,6 +25,7 @@ import com.drew.imaging.isobmff.IsoBoxContext;
 import com.drew.imaging.isobmff.IsoBoxReader;
 import com.drew.imaging.isobmff.IsoBoxReaders;
 import com.drew.imaging.isobmff.IsoInput;
+import com.drew.imaging.isobmff.IsoSamples;
 import com.drew.lang.annotations.NotNull;
 import com.drew.lang.annotations.Nullable;
 import com.drew.metadata.Metadata;
@@ -50,6 +51,21 @@ public class QuickTimeMetadataReader
      */
     public static final List<IsoBoxReader> ALL_READERS = QuickTimeReaders.ALL_READERS;
 
+    /**
+     * Reads the still image time of an Apple Live Photo's movie into a
+     * {@link com.drew.metadata.mov.media.QuickTimeLivePhotoDirectory}. Not among
+     * {@link #ALL_READERS}: the time is the position of a sample in {@code mdat}, and Apple writes
+     * {@code mdat} before {@code moov}, so from a stream the walk would have to keep {@code mdat}
+     * in memory for every movie read (see {@link IsoBoxReader#getLocatingPaths}). Add it to the
+     * readers of {@link #compile} for a {@link IsoInput} of a file, which is read by position:
+     * <pre>
+     * List&lt;IsoBoxReader&gt; readers = new ArrayList&lt;IsoBoxReader&gt;(QuickTimeMetadataReader.ALL_READERS);
+     * readers.add(QuickTimeMetadataReader.LIVE_PHOTO_READER);
+     * Metadata metadata = QuickTimeMetadataReader.readMetadata(IsoInput.of(file), readers);
+     * </pre>
+     */
+    public static final IsoBoxReader LIVE_PHOTO_READER = IsoSamples.readers(new LivePhotoSampleReader(), 16);
+
     private static final IsoBoxReaders DEFAULT_READERS = compile(ALL_READERS);
 
     /** Prepares a walk over the QuickTime structure that calls {@code readers}; build it once and reuse it. */
@@ -65,6 +81,15 @@ public class QuickTimeMetadataReader
     {
         Metadata metadata = new Metadata();
         extract(input, metadata);
+        return metadata;
+    }
+
+    /** Reads {@code input} with {@code readers} instead of {@link #ALL_READERS}; see {@link #compile}. */
+    @NotNull
+    public static Metadata readMetadata(@NotNull IsoInput input, @NotNull Iterable<? extends IsoBoxReader> readers) throws IOException
+    {
+        Metadata metadata = new Metadata();
+        compile(readers).read(input, newRoot(metadata, null));
         return metadata;
     }
 
