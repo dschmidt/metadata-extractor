@@ -78,6 +78,9 @@ public final class IsoSamples
         long[] chunkRuns;
         @Nullable
         long[] timeRuns;
+        /** The composition offsets of {@code ctts}: pairs of sample count and offset, signed in version 1. */
+        @Nullable
+        long[] compositionRuns;
         /** The edit list: pairs of segment duration in the movie's time scale and media time, -1 for an empty edit. */
         @Nullable
         long[] edits;
@@ -189,10 +192,11 @@ public final class IsoSamples
         }
 
         /**
-         * The time at which the sample is presented, in the track's time scale, with the track's
-         * edit list applied: an empty edit at the start delays it, an edit starting inside the
-         * media advances it. The same as {@link #getTime} without an edit list, and -1 when no
-         * edit presents the sample.
+         * The time at which the sample is presented, in the track's time scale: the decoding time
+         * plus the sample's composition offset from {@code ctts} or its track run, with the track's
+         * edit list applied, so an empty edit at the start delays it and an edit starting inside
+         * the media advances it. The same as {@link #getTime} without either, and -1 when no edit
+         * presents the sample.
          */
         public long getPresentationTime()
         {
@@ -295,7 +299,7 @@ public final class IsoSamples
 
     private static final String TRAK = "moov/trak/";
     /** The sample tables, read only for tracks the sample reader wants. */
-    private static final Set<String> TABLES = new HashSet<String>(Arrays.asList("stts", "stsc", "stsz", "stz2", "stco", "co64"));
+    private static final Set<String> TABLES = new HashSet<String>(Arrays.asList("stts", "ctts", "stsc", "stsz", "stz2", "stco", "co64"));
     private static final String STBL = TRAK + "mdia/minf/stbl/";
 
     /** The readers for the tracks and fragments of the file; at most {@code maxSamples} samples are read per track. */
@@ -304,7 +308,7 @@ public final class IsoSamples
     {
         final List<String> paths = Arrays.asList("moov/mvhd", TRAK + "tkhd", TRAK + "tref/*", TRAK + "edts/elst",
             TRAK + "mdia/mdhd", TRAK + "mdia/hdlr",
-            STBL + "stsd", STBL + "stts", STBL + "stsc", STBL + "stsz", STBL + "stz2", STBL + "stco", STBL + "co64",
+            STBL + "stsd", STBL + "stts", STBL + "ctts", STBL + "stsc", STBL + "stsz", STBL + "stz2", STBL + "stco", STBL + "co64",
             "moov/mvex/trex", "moof/traf/tfhd", "moof/traf/tfdt", "moof/traf/trun");
         return new IsoBoxReader()
         {
@@ -362,7 +366,7 @@ public final class IsoSamples
                     }
                     fragment.track.time = version == 1 ? payload.getInt64() : payload.getUInt32();
                 } else if (type.equals("trun")) {
-                    readTrackRun(box, payload, flags, reader, maxSamples);
+                    readTrackRun(box, payload, version, flags, reader, maxSamples);
                 } else {
                     readTrackBox(box, payload, version, type, tracks, reader, maxSamples);
                 }
@@ -474,11 +478,11 @@ public final class IsoSamples
             }
             track.edits = edits;
         } else if (!Boolean.FALSE.equals(track.wanted)) {
-            readTable(box, payload, type, track, maxSamples);
+            readTable(box, payload, version, type, track, maxSamples);
         }
     }
 
-    private static void readTable(@NotNull IsoBoxContext box, @NotNull SequentialReader payload, @NotNull String type,
+    private static void readTable(@NotNull IsoBoxContext box, @NotNull SequentialReader payload, int version, @NotNull String type,
                                   @NotNull Track track, int maxSamples) throws IOException
     {
         if (type.equals("stsz")) {
@@ -520,6 +524,13 @@ public final class IsoSamples
             track.chunkRuns = pairs(box, payload, 12, maxSamples);
         } else if (type.equals("stts")) {
             track.timeRuns = pairs(box, payload, 8, maxSamples);
+        } else if (type.equals("ctts")) {
+            long[] runs = pairs(box, payload, 8, maxSamples);
+            if (version == 1) {
+                for (int i = 1; i < runs.length; i += 2)
+                    runs[i] = (int) runs[i];
+            }
+            track.compositionRuns = runs;
         } else {
             boolean wide = type.equals("co64");
             int count = (int) Math.min(Math.min(payload.getUInt32(), maxSamples), remaining(box) / (wide ? 8 : 4));
@@ -583,6 +594,7 @@ public final class IsoSamples
             track.sampleSizes = null;
             track.chunkRuns = null;
             track.timeRuns = null;
+            track.compositionRuns = null;
         }
     }
 
@@ -595,11 +607,15 @@ public final class IsoSamples
         long[] times = track.timeRuns;
         if (offsets == null || sizes == null || runs == null)
             return;
+        long[] compositions = track.compositionRuns;
         int entries = runs.length / 2;
         long nextChunk = 1;
         int timeRun = 0;
         long timeLeft = 0;
         long delta = 0;
+        int compositionRun = 0;
+        long compositionLeft = 0;
+        long compositionOffset = 0;
         for (int entry = 0; entry < entries && track.samples < sizes.count; entry++) {
             long firstChunk = runs[entry * 2];
             long perChunk = runs[entry * 2 + 1];
@@ -616,8 +632,16 @@ public final class IsoSamples
                     long duration = timeLeft > 0 ? delta : 0;
                     if (timeLeft > 0)
                         timeLeft--;
+                    while (compositionLeft == 0 && compositions != null && compositionRun < compositions.length / 2) {
+                        compositionLeft = compositions[compositionRun * 2];
+                        compositionOffset = compositions[compositionRun * 2 + 1];
+                        compositionRun++;
+                    }
+                    long composition = compositionLeft > 0 ? compositionOffset : 0;
+                    if (compositionLeft > 0)
+                        compositionLeft--;
                     long size = sizes.get(track.samples);
-                    request(box, track, sample(box, track, duration, offset, size), reader);
+                    request(box, track, sample(box, track, duration, composition, offset, size), reader);
                     track.time += duration;
                     offset += size;
                 }
@@ -688,7 +712,7 @@ public final class IsoSamples
         traf.put(Fragment.class, fragment);
     }
 
-    private static void readTrackRun(@NotNull IsoBoxContext box, @NotNull SequentialReader payload, int flags,
+    private static void readTrackRun(@NotNull IsoBoxContext box, @NotNull SequentialReader payload, int version, int flags,
                                      @NotNull SampleReader reader, int maxSamples) throws IOException
     {
         IsoBoxContext traf = box.parent();
@@ -724,10 +748,9 @@ public final class IsoSamples
             long size = (flags & 0x200) != 0 ? payload.getUInt32() : fragment.defaultSampleSize;
             if ((flags & 0x400) != 0)
                 payload.skip(4);
-            if ((flags & 0x800) != 0)
-                payload.skip(4);
+            long composition = (flags & 0x800) == 0 ? 0 : version == 0 ? payload.getUInt32() : payload.getInt32();
             if (track != null && !track.lost && track.samples < maxSamples) {
-                request(box, track, sample(box, track, duration, offset, size), reader);
+                request(box, track, sample(box, track, duration, composition, offset, size), reader);
                 track.time += duration;
             }
             offset += size;
@@ -744,13 +767,13 @@ public final class IsoSamples
         movie.located = fragment.located;
     }
 
-    /** The track's next sample, at its current time, presented as its edit list says. */
+    /** The track's next sample, at its current time, presented as its composition offset and the edit list say. */
     @NotNull
-    private static Sample sample(@NotNull IsoBoxContext box, @NotNull Track track, long duration, long offset, long size)
+    private static Sample sample(@NotNull IsoBoxContext box, @NotNull Track track, long duration, long composition, long offset, long size)
     {
         Tracks tracks = box.root().get(Tracks.class);
         long movieTimescale = tracks == null ? 0 : tracks.movieTimescale;
-        return new Sample(track.samples++, track.time, presentationTime(track, movieTimescale, track.time), duration, offset, size);
+        return new Sample(track.samples++, track.time, presentationTime(track, movieTimescale, track.time + composition), duration, offset, size);
     }
 
     /**

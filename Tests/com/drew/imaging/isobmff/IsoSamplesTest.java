@@ -148,16 +148,18 @@ public class IsoSamplesTest
         byte[] elst = box("elst", new byte[4], int32(2), int32(500), int32(-1), int32(0x10000), int32(0), int32(0), int32(0x10000));
         byte[] stsd = box("stsd", new byte[4], int32(1), box("mebx", new byte[8], box("keys", new byte[] {1, 2, 3})));
         byte[] stts = box("stts", new byte[4], int32(1), int32(2), int32(10));
+        // composition offsets of version 1: the first sample is presented 5 ticks after decoding, the second 2 before
+        byte[] ctts = box("ctts", new byte[] {1, 0, 0, 0}, int32(2), int32(1), int32(5), int32(1), int32(-2));
         byte[] stsc = box("stsc", new byte[4], int32(1), int32(1), int32(2), int32(1));
         byte[] stsz = box("stsz", new byte[4], int32(0), int32(2), int32(2), int32(3));
         byte[] hdlr = box("hdlr", new byte[8], ascii("meta"), new byte[13]);
-        byte[] probe = box("moov", mvhd, box("trak", box("edts", elst), box("mdia", mdhd, hdlr, box("minf", box("stbl", stsd, stts, stsc, stsz, box("stco", new byte[4], int32(1), int32(0)))))));
+        byte[] probe = box("moov", mvhd, box("trak", box("edts", elst), box("mdia", mdhd, hdlr, box("minf", box("stbl", stsd, stts, ctts, stsc, stsz, box("stco", new byte[4], int32(1), int32(0)))))));
         int data = probe.length + 8;
-        byte[] moov = box("moov", mvhd, box("trak", box("edts", elst), box("mdia", mdhd, hdlr, box("minf", box("stbl", stsd, stts, stsc, stsz, box("stco", new byte[4], int32(1), int32(data)))))));
+        byte[] moov = box("moov", mvhd, box("trak", box("edts", elst), box("mdia", mdhd, hdlr, box("minf", box("stbl", stsd, stts, ctts, stsc, stsz, box("stco", new byte[4], int32(1), int32(data)))))));
         List<String> errors = new ArrayList<String>();
         read(join(moov, box("mdat", ascii("aabbb"))), recorder, errors);
 
-        assertEquals(Arrays.asList("0->300=aa", "10->310=bbb"), got);
+        assertEquals(Arrays.asList("0->305=aa", "10->308=bbb"), got);
         assertArrayEquals(join(new byte[8], box("keys", new byte[] {1, 2, 3})), entry[0]);
         assertTrue(errors.toString(), errors.isEmpty());
     }
