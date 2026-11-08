@@ -42,6 +42,7 @@ public class Mp4VideoDirectory extends Mp4MediaDirectory
     public static final int TAG_GRAPHICS_MODE                           = 211;
     public static final int TAG_OPCOLOR                                 = 212;
     public static final int TAG_COLOR_TABLE                             = 213;
+    /** Frames per second averaged over the media's duration. */
     public static final int TAG_FRAME_RATE                              = 214;
     public static final int TAG_COMPRESSION_TYPE_RAW                    = 215;
 

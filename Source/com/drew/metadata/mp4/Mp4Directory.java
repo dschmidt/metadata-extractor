@@ -57,11 +57,15 @@ public class Mp4Directory extends Directory {
     public static final int TAG_MINOR_VERSION                           = 2;
     public static final int TAG_COMPATIBLE_BRANDS                       = 3;
 
+    /** The date and time of the Exif thumbnail in Canon's {@code CNTH} atom. */
+    public static final int TAG_CANON_THUMBNAIL_DATE_TIME               = 0x4000;
+
     @NotNull
     private static final HashMap<Integer, String> _tagNameMap = new HashMap<Integer, String>();
 
 
     static {
+        _tagNameMap.put(TAG_CANON_THUMBNAIL_DATE_TIME, "Canon Thumbnail DateTime");
         _tagNameMap.put(TAG_MAJOR_BRAND, "Major Brand");
         _tagNameMap.put(TAG_MINOR_VERSION, "Minor Version");
         _tagNameMap.put(TAG_COMPATIBLE_BRANDS, "Compatible Brands");

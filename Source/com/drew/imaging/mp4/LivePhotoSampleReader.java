@@ -18,7 +18,7 @@
  *    https://github.com/drewnoakes/metadata-extractor/
  *    https://github.com/drewnoakes/metadata-extractor
  */
-package com.drew.imaging.quicktime;
+package com.drew.imaging.mp4;
 
 import com.drew.imaging.isobmff.IsoBox;
 import com.drew.imaging.isobmff.IsoBoxContext;
@@ -28,7 +28,7 @@ import com.drew.lang.Rational;
 import com.drew.lang.SequentialByteArrayReader;
 import com.drew.lang.SequentialReader;
 import com.drew.lang.annotations.NotNull;
-import com.drew.metadata.mov.media.QuickTimeLivePhotoDirectory;
+import com.drew.metadata.mp4.LivePhotoDirectory;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -40,8 +40,8 @@ import java.util.Map;
  * entry names the key {@code com.apple.quicktime.still-image-time}. The sample carries the
  * transform from the video frame to the photo and the dimensions it refers to; its still image
  * time is a marker, and the moment it stands for comes from the track's edit list, which
- * {@link QuickTimeReaders} reads from {@code moov} alone. This reader adds the transform and the
- * dimensions to that {@link QuickTimeLivePhotoDirectory}, or makes one with the time as well when
+ * {@link Mp4Readers} reads from {@code moov} alone. This reader adds the transform and the
+ * dimensions to that {@link LivePhotoDirectory}, or makes one with the time as well when
  * the default readers did not run.
  */
 final class LivePhotoSampleReader implements IsoSamples.SampleReader
@@ -64,11 +64,11 @@ final class LivePhotoSampleReader implements IsoSamples.SampleReader
     public void readSample(@NotNull IsoBoxContext file, @NotNull IsoSamples.Track track, @NotNull IsoSamples.Sample sample,
                            @NotNull SequentialReader data) throws IOException
     {
-        QuickTimeLivePhotoDirectory existing = file.get(QuickTimeLivePhotoDirectory.class);
-        if (existing != null && existing.containsTag(QuickTimeLivePhotoDirectory.TAG_STILL_IMAGE_TRANSFORM))
+        LivePhotoDirectory existing = file.get(LivePhotoDirectory.class);
+        if (existing != null && existing.containsTag(LivePhotoDirectory.TAG_STILL_IMAGE_TRANSFORM))
             return;
         Map<Integer, String> keys = keys(track);
-        QuickTimeLivePhotoDirectory directory = existing != null ? existing : new QuickTimeLivePhotoDirectory();
+        LivePhotoDirectory directory = existing != null ? existing : new LivePhotoDirectory();
         long size = sample.getSize();
         while (size - data.getPosition() >= 8) {
             long entrySize = data.getUInt32();
@@ -79,25 +79,25 @@ final class LivePhotoSampleReader implements IsoSamples.SampleReader
             String name = keys.get(key);
             if (KEY_STILL_IMAGE_TIME.equals(name)) {
                 long time = sample.getPresentationTime() >= 0 ? sample.getPresentationTime() : sample.getTime();
-                if (track.getTimescale() > 0 && !directory.containsTag(QuickTimeLivePhotoDirectory.TAG_STILL_IMAGE_TIME))
-                    directory.setRational(QuickTimeLivePhotoDirectory.TAG_STILL_IMAGE_TIME, new Rational(time, track.getTimescale()));
+                if (track.getTimescale() > 0 && !directory.containsTag(LivePhotoDirectory.TAG_STILL_IMAGE_TIME))
+                    directory.setRational(LivePhotoDirectory.TAG_STILL_IMAGE_TIME, new Rational(time, track.getTimescale()));
             } else if (KEY_TRANSFORM.equals(name) && value.length == 9 * 8) {
                 SequentialReader reader = new SequentialByteArrayReader(value);
                 double[] transform = new double[9];
                 for (int i = 0; i < 9; i++)
                     transform[i] = reader.getDouble64();
-                directory.setDoubleArray(QuickTimeLivePhotoDirectory.TAG_STILL_IMAGE_TRANSFORM, transform);
+                directory.setDoubleArray(LivePhotoDirectory.TAG_STILL_IMAGE_TRANSFORM, transform);
             } else if (KEY_REFERENCE_DIMENSIONS.equals(name) && value.length == 2 * 4) {
                 // two floats holding whole pixel counts
                 SequentialReader reader = new SequentialByteArrayReader(value);
-                directory.setIntArray(QuickTimeLivePhotoDirectory.TAG_STILL_IMAGE_REFERENCE_DIMENSIONS,
+                directory.setIntArray(LivePhotoDirectory.TAG_STILL_IMAGE_REFERENCE_DIMENSIONS,
                     new int[] {Math.round(reader.getFloat32()), Math.round(reader.getFloat32())});
             }
         }
         if (directory.getTagCount() == 0 || existing != null)
             return;
         file.metadata().addDirectory(directory);
-        file.put(QuickTimeLivePhotoDirectory.class, directory);
+        file.put(LivePhotoDirectory.class, directory);
     }
 
     @NotNull

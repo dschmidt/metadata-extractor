@@ -18,20 +18,20 @@
  *    https://github.com/drewnoakes/metadata-extractor/
  *    https://github.com/drewnoakes/metadata-extractor
  */
-package com.drew.metadata.mov.media;
+package com.drew.metadata.mp4;
 
 import com.drew.lang.Rational;
 import com.drew.lang.annotations.NotNull;
 import com.drew.lang.annotations.Nullable;
-import com.drew.metadata.mov.QuickTimeDescriptor;
+import com.drew.metadata.TagDescriptor;
 
 import java.util.Locale;
 
-import static com.drew.metadata.mov.media.QuickTimeLivePhotoDirectory.*;
+import static com.drew.metadata.mp4.LivePhotoDirectory.*;
 
-public class QuickTimeLivePhotoDescriptor extends QuickTimeDescriptor
+public class LivePhotoDescriptor extends TagDescriptor<LivePhotoDirectory>
 {
-    public QuickTimeLivePhotoDescriptor(@NotNull QuickTimeLivePhotoDirectory directory)
+    public LivePhotoDescriptor(@NotNull LivePhotoDirectory directory)
     {
         super(directory);
     }

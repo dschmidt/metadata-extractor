@@ -26,7 +26,6 @@ import com.drew.imaging.isobmff.IsoBoxReader;
 import com.drew.imaging.isobmff.IsoBoxReaders;
 import com.drew.imaging.isobmff.QuickTimeLayout;
 import com.drew.lang.DateUtil;
-import com.drew.lang.Rational;
 import com.drew.lang.SequentialByteArrayReader;
 import com.drew.lang.SequentialReader;
 import com.drew.lang.annotations.NotNull;
@@ -50,7 +49,6 @@ import com.drew.metadata.mov.atoms.TrackHeaderAtom;
 import com.drew.metadata.mov.atoms.VideoInformationMediaHeaderAtom;
 import com.drew.metadata.mov.atoms.VideoSampleDescriptionAtom;
 import com.drew.metadata.mov.atoms.canon.CanonThumbnailAtom;
-import com.drew.metadata.mov.media.QuickTimeLivePhotoDirectory;
 import com.drew.metadata.mov.media.QuickTimeMediaDirectory;
 import com.drew.metadata.mov.media.QuickTimeMusicDirectory;
 import com.drew.metadata.mov.media.QuickTimeSoundDirectory;
@@ -104,26 +102,6 @@ final class QuickTimeReaders
         {
             this.directory = directory;
         }
-    }
-
-    /**
-     * A timed metadata track ({@code hdlr} of {@code meta}), as far as the still image time of a
-     * Live Photo needs: whether its {@code mebx} entry names the key, how many samples it has, and
-     * the empty edit before its media. The time comes from these alone; the sample itself holds
-     * only a marker, so {@code mdat} is not read.
-     */
-    private static final class TimedMetadata
-    {
-        boolean stillImageTime;
-        long samples;
-        /** The duration of the empty edit before the media in the movie's time scale, or -1 without one. */
-        long emptyEdit = -1;
-    }
-
-    /** The timed metadata tracks of the file, for the still image time once {@code moov} is read. */
-    private static final class TimedMetadataTracks
-    {
-        final List<TimedMetadata> all = new ArrayList<TimedMetadata>(1);
     }
 
     /** The directory a {@code meta}'s {@code hdlr} chose for the rest of it, and the keys of its values. */
@@ -215,14 +193,6 @@ final class QuickTimeReaders
             @Override
             public void read(@NotNull IsoBoxContext box) throws IOException
             {
-                readEditList(box);
-            }
-        }, "moov/trak/edts/elst"),
-        on(new IsoBoxReaders.Callback()
-        {
-            @Override
-            public void read(@NotNull IsoBoxContext box) throws IOException
-            {
                 new CanonThumbnailAtom(new SequentialByteArrayReader(box.payloadBytes())).addMetadata(directory(box));
             }
         }, paths(GENERAL, "CNTH")),
@@ -292,10 +262,6 @@ final class QuickTimeReaders
     private static void readMediaHandler(@NotNull IsoBoxContext box) throws IOException
     {
         String componentType = new HandlerReferenceAtom(box.payload(), new Atom(box.box())).getComponentType();
-        if (componentType.equals("meta")) {
-            timedMetadata(box);
-            return;
-        }
         final QuickTimeDirectory directory = mediaDirectory(componentType);
         if (directory == null)
             return;
@@ -334,84 +300,6 @@ final class QuickTimeReaders
         return null;
     }
 
-    /** Registers the track of {@code hdlr} as timed metadata, and the still image time for when {@code moov} is read. */
-    private static void timedMetadata(@NotNull IsoBoxContext hdlr)
-    {
-        IsoBoxContext trak = hdlr.ancestor("trak");
-        IsoBoxContext moov = hdlr.ancestor("moov");
-        if (trak == null || moov == null)
-            return;
-        TimedMetadataTracks tracks = moov.get(TimedMetadataTracks.class);
-        if (tracks == null) {
-            final TimedMetadataTracks created = new TimedMetadataTracks();
-            tracks = created;
-            moov.put(TimedMetadataTracks.class, created);
-            moov.whenDone(new IsoBoxReaders.Callback()
-            {
-                @Override
-                public void read(@NotNull IsoBoxContext done)
-                {
-                    readStillImageTime(done, created);
-                }
-            });
-        }
-        TimedMetadata track = new TimedMetadata();
-        tracks.all.add(track);
-        trak.put(TimedMetadata.class, track);
-    }
-
-    /**
-     * The still image time of a Live Photo, once {@code moov} is read: the track keyed
-     * {@code still-image-time} holds one sample that an empty edit places at the moment the
-     * photo was taken; without an empty edit the photo is the first frame. As Tika does, nothing
-     * is read when the track holds more than one sample.
-     */
-    private static void readStillImageTime(@NotNull IsoBoxContext moov, @NotNull TimedMetadataTracks tracks)
-    {
-        for (TimedMetadata track : tracks.all) {
-            if (!track.stillImageTime || track.samples != 1)
-                continue;
-            Long movieTimescale = directory(moov).getLongObject(QuickTimeDirectory.TAG_TIME_SCALE);
-            Rational time = track.emptyEdit <= 0 ? new Rational(0, 1)
-                : movieTimescale != null && movieTimescale > 0 ? new Rational(track.emptyEdit, movieTimescale) : null;
-            if (time == null)
-                return;
-            QuickTimeLivePhotoDirectory directory = new QuickTimeLivePhotoDirectory();
-            directory.setRational(QuickTimeLivePhotoDirectory.TAG_STILL_IMAGE_TIME, time);
-            moov.metadata().addDirectory(directory);
-            moov.root().put(QuickTimeLivePhotoDirectory.class, directory);
-            return;
-        }
-    }
-
-    /** {@code trak/edts/elst}: the empty edit before the media, if the list starts with one. */
-    private static void readEditList(@NotNull IsoBoxContext box) throws IOException
-    {
-        IsoBoxContext trak = box.ancestor("trak");
-        if (trak == null)
-            return;
-        SequentialReader payload = box.payload();
-        int version = payload.getUInt8();
-        payload.skip(3);
-        if (payload.getUInt32() == 0)
-            return;
-        long duration = version == 1 ? payload.getInt64() : payload.getUInt32();
-        long mediaTime = version == 1 ? payload.getInt64() : payload.getInt32();
-        if (mediaTime == -1)
-            trak.put(EmptyEdit.class, new EmptyEdit(duration));
-    }
-
-    /** The duration of the empty edit a track's edit list starts with, in the movie's time scale. */
-    private static final class EmptyEdit
-    {
-        final long duration;
-
-        EmptyEdit(long duration)
-        {
-            this.duration = duration;
-        }
-    }
-
     private static void readMediaInformation(@NotNull IsoBoxContext box) throws IOException
     {
         Media media = box.get(Media.class);
@@ -431,12 +319,8 @@ final class QuickTimeReaders
     private static void readSampleDescription(@NotNull IsoBoxContext box) throws IOException
     {
         Media media = box.get(Media.class);
-        if (media == null) {
-            TimedMetadata timed = box.get(TimedMetadata.class);
-            if (timed != null)
-                timed.stillImageTime = LivePhotoSampleReader.keys(sampleEntry(box)).containsValue(LivePhotoSampleReader.KEY_STILL_IMAGE_TIME);
+        if (media == null)
             return;
-        }
         SequentialReader reader = box.payload();
         Atom atom = new Atom(box.box());
         QuickTimeDirectory directory = media.directory;
@@ -454,41 +338,11 @@ final class QuickTimeReaders
             new MusicSampleDescriptionAtom(reader, atom).addMetadata((QuickTimeMusicDirectory) directory);
     }
 
-    /** The first sample entry of {@code stsd} after its size and type, if it is a {@code mebx} entry; else empty. */
-    @NotNull
-    private static byte[] sampleEntry(@NotNull IsoBoxContext stsd) throws IOException
-    {
-        SequentialReader payload = stsd.payload();
-        payload.skip(4);
-        if (payload.getUInt32() == 0)
-            return new byte[0];
-        long size = payload.getUInt32();
-        String format = payload.getString(4);
-        long remaining = stsd.box().payloadSize - payload.getPosition();
-        if (!format.equals("mebx") || size < 8 || size - 8 > remaining)
-            return new byte[0];
-        return payload.getBytes((int) (size - 8));
-    }
-
     private static void readTimeToSample(@NotNull IsoBoxContext box) throws IOException
     {
         Media media = box.get(Media.class);
-        if (media == null) {
-            TimedMetadata timed = box.get(TimedMetadata.class);
-            if (timed != null) {
-                SequentialReader payload = box.payload();
-                payload.skip(4);
-                long entries = Math.min(payload.getUInt32(), (box.box().payloadSize - 8) / 8);
-                for (long i = 0; i < entries; i++) {
-                    timed.samples += payload.getUInt32();
-                    payload.skip(4);
-                }
-                EmptyEdit edit = box.get(EmptyEdit.class);
-                if (edit != null)
-                    timed.emptyEdit = edit.duration;
-            }
+        if (media == null)
             return;
-        }
         QuickTimeContext context = context(box);
         if (context == null)
             return;

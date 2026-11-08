@@ -25,7 +25,6 @@ import com.drew.imaging.isobmff.IsoBoxContext;
 import com.drew.imaging.isobmff.IsoBoxReader;
 import com.drew.imaging.isobmff.IsoBoxReaders;
 import com.drew.imaging.isobmff.IsoInput;
-import com.drew.imaging.isobmff.IsoSamples;
 import com.drew.lang.annotations.NotNull;
 import com.drew.lang.annotations.Nullable;
 import com.drew.metadata.Metadata;
@@ -38,8 +37,8 @@ import java.io.InputStream;
 import java.util.List;
 
 /**
- * Obtains metadata from QuickTime files, with box readers registered by path; see
- * {@link IsoBoxReaders} for how boxes are walked.
+ * Obtains metadata from QuickTime files into the directories of {@code com.drew.metadata.mov},
+ * with box readers registered by path; see {@link IsoBoxReaders} for how boxes are walked.
  *
  * @author Payton Garland
  */
@@ -50,22 +49,6 @@ public class QuickTimeMetadataReader
      * {@link #compile} to read further boxes.
      */
     public static final List<IsoBoxReader> ALL_READERS = QuickTimeReaders.ALL_READERS;
-
-    /**
-     * Adds the transform from the video frame to the photo, and its reference dimensions, to the
-     * {@link com.drew.metadata.mov.media.QuickTimeLivePhotoDirectory} of an Apple Live Photo's
-     * movie. {@link #ALL_READERS} give that directory its still image time from {@code moov}
-     * alone; the transform lies in the track's one sample in {@code mdat}, and Apple writes
-     * {@code mdat} before {@code moov}, so from a stream the walk would have to keep {@code mdat}
-     * in memory for every movie read (see {@link IsoBoxReader#getLocatingPaths}). Add it to the
-     * readers of {@link #compile} for a {@link IsoInput} of a file, which is read by position:
-     * <pre>
-     * List&lt;IsoBoxReader&gt; readers = new ArrayList&lt;IsoBoxReader&gt;(QuickTimeMetadataReader.ALL_READERS);
-     * readers.add(QuickTimeMetadataReader.LIVE_PHOTO_TRANSFORM_READER);
-     * Metadata metadata = QuickTimeMetadataReader.readMetadata(IsoInput.of(file), readers);
-     * </pre>
-     */
-    public static final IsoBoxReader LIVE_PHOTO_TRANSFORM_READER = IsoSamples.readers(new LivePhotoSampleReader(), 16);
 
     private static final IsoBoxReaders DEFAULT_READERS = compile(ALL_READERS);
 

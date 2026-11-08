@@ -24,6 +24,7 @@ import com.drew.imaging.isobmff.IsoBoxContext;
 import com.drew.imaging.isobmff.IsoBoxReader;
 import com.drew.imaging.isobmff.IsoBoxReaders;
 import com.drew.imaging.isobmff.IsoInput;
+import com.drew.imaging.isobmff.IsoSamples;
 import com.drew.lang.annotations.NotNull;
 import com.drew.lang.annotations.Nullable;
 import com.drew.metadata.Metadata;
@@ -36,7 +37,7 @@ import java.io.InputStream;
 import java.util.List;
 
 /**
- * Obtains metadata from MP4 files, with box readers registered by path; see
+ * Obtains metadata from MP4 and QuickTime files, with box readers registered by path; see
  * {@link IsoBoxReaders} for how they are walked.
  */
 public class Mp4MetadataReader
@@ -49,6 +50,22 @@ public class Mp4MetadataReader
 
     /** The reader in {@link #ALL_READERS} for {@code udta} boxes, for callers that read them their own way. */
     public static final IsoBoxReader USER_DATA_READER = Mp4Readers.USER_DATA_READER;
+
+    /**
+     * Adds the transform from the video frame to the photo, and its reference dimensions, to the
+     * {@link com.drew.metadata.mp4.LivePhotoDirectory} of an Apple Live Photo's movie.
+     * {@link #ALL_READERS} give that directory its still image time from {@code moov} alone; the
+     * transform lies in the track's one sample in {@code mdat}, and Apple writes {@code mdat}
+     * before {@code moov}, so from a stream the walk would have to keep {@code mdat} in memory
+     * for every movie read (see {@link IsoBoxReader#getLocatingPaths}). Add it to the readers of
+     * {@link #compile} for a {@link IsoInput} of a file, which is read by position:
+     * <pre>
+     * List&lt;IsoBoxReader&gt; readers = new ArrayList&lt;IsoBoxReader&gt;(Mp4MetadataReader.ALL_READERS);
+     * readers.add(Mp4MetadataReader.LIVE_PHOTO_TRANSFORM_READER);
+     * Metadata metadata = Mp4MetadataReader.readMetadata(IsoInput.of(file), readers);
+     * </pre>
+     */
+    public static final IsoBoxReader LIVE_PHOTO_TRANSFORM_READER = IsoSamples.readers(new LivePhotoSampleReader(), 16);
 
     private static final IsoBoxReaders DEFAULT_READERS = compile(ALL_READERS);
 
@@ -65,6 +82,15 @@ public class Mp4MetadataReader
     {
         Metadata metadata = new Metadata();
         extract(input, metadata);
+        return metadata;
+    }
+
+    /** Reads {@code input} with {@code readers} instead of {@link #ALL_READERS}; see {@link #compile}. */
+    @NotNull
+    public static Metadata readMetadata(@NotNull IsoInput input, @NotNull Iterable<? extends IsoBoxReader> readers) throws IOException
+    {
+        Metadata metadata = new Metadata();
+        compile(readers).read(input, newRoot(metadata, null));
         return metadata;
     }
 

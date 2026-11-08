@@ -18,10 +18,10 @@
  *    https://github.com/drewnoakes/metadata-extractor/
  *    https://github.com/drewnoakes/metadata-extractor
  */
-package com.drew.metadata.mov.media;
+package com.drew.metadata.mp4;
 
 import com.drew.lang.annotations.NotNull;
-import com.drew.metadata.mov.QuickTimeDirectory;
+
 
 import java.util.HashMap;
 
@@ -30,7 +30,7 @@ import java.util.HashMap;
  * at, from the timed metadata track whose key is {@code com.apple.quicktime.still-image-time},
  * and how the photo's frame maps onto the video's.
  */
-public class QuickTimeLivePhotoDirectory extends QuickTimeDirectory
+public class LivePhotoDirectory extends Mp4Directory
 {
     /** The time of the still image in the movie, in seconds, as a rational. */
     public static final int TAG_STILL_IMAGE_TIME = 1;
@@ -49,16 +49,16 @@ public class QuickTimeLivePhotoDirectory extends QuickTimeDirectory
         _tagNameMap.put(TAG_STILL_IMAGE_REFERENCE_DIMENSIONS, "Still Image Reference Dimensions");
     }
 
-    public QuickTimeLivePhotoDirectory()
+    public LivePhotoDirectory()
     {
-        this.setDescriptor(new QuickTimeLivePhotoDescriptor(this));
+        this.setDescriptor(new LivePhotoDescriptor(this));
     }
 
     @Override
     @NotNull
     public String getName()
     {
-        return "QuickTime Live Photo";
+        return "Live Photo";
     }
 
     @Override
