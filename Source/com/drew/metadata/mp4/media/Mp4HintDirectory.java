@@ -26,10 +26,11 @@ import java.util.HashMap;
 
 public class Mp4HintDirectory extends Mp4MediaDirectory
 {
-    public static final int TAG_MAX_PDU_SIZE = 101;
-    public static final int TAG_AVERAGE_PDU_SIZE = 102;
-    public static final int TAG_MAX_BITRATE = 103;
-    public static final int TAG_AVERAGE_BITRATE = 104;
+    // 701 and up: 101 to 104 are the media tags every track has, which these once collided with
+    public static final int TAG_MAX_PDU_SIZE = 701;
+    public static final int TAG_AVERAGE_PDU_SIZE = 702;
+    public static final int TAG_MAX_BITRATE = 703;
+    public static final int TAG_AVERAGE_BITRATE = 704;
 
     public Mp4HintDirectory()
     {
