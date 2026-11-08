@@ -7,13 +7,22 @@ depending on their enclosing media or metadata handler.
 
 ## Implementation mapping
 
-- Java: `Source/com/drew/imaging/quicktime/` traverses atoms using handlers in
-  `Source/com/drew/metadata/mov/`, including the `media` and `metadata` packages.
-  The handler-based implementation selects how nested atoms are interpreted.
+- Java: `Source/com/drew/imaging/quicktime/QuickTimeReaders.java` registers
+  readers by atom path on the shared ISO base media walk
+  (`com.drew.imaging.isobmff`, layout `QuickTimeLayout`), and the atom classes in
+  `Source/com/drew/metadata/mov/atoms/` decode the payloads into the directories
+  of `Source/com/drew/metadata/mov/`. A track's `mdia/hdlr` component type
+  chooses its media directory (`vide`, `soun`, `tmcd`, `text`, `sbtl`, `musi`);
+  a `meta` atom's `hdlr` chooses between `mdta` keys and values and an `mdir`
+  iTunes-style list. The latest `mdhd` dates the media directories and gives the
+  time scale of `stts`, as the earlier handler-based reader did.
+  `QuickTimeMetadataReader.readMetadata(IsoInput)` takes a stream, a file, or a
+  `RandomAccessReader`; `ImageMetadataReader.readMetadata(File)` reads QuickTime
+  as a file.
 - .NET: `MetadataExtractor/Formats/QuickTime/` uses callbacks for traversal and
   metadata extraction. This reader also handles MP4 metadata.
 
-The Java handler architecture is not a requirement for the .NET implementation.
+The Java reader layout is not a requirement for the .NET implementation.
 Shared container terminology does not imply equivalent supported tags or media
 properties. Compare those individually against the specification and identical
 inputs before claiming a capability gap.

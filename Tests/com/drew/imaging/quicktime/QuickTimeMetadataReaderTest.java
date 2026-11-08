@@ -44,8 +44,12 @@ public class QuickTimeMetadataReaderTest
     private static final int FREE_LENGTH = 16;
     private static final int NESTING_LIMIT = 100;
 
+    /**
+     * A 'moov' inside 'moov' has no registered path below it, so the walk passes the whole chain
+     * as one box: no recursion, no error.
+     */
     @Test
-    public void testDeeplyNestedAtomsReportErrorRatherThanOverflowingStack() throws Exception
+    public void testDeeplyNestedAtomsArePassedRatherThanOverflowingStack() throws Exception
     {
         Metadata metadata = ImageMetadataReader.readMetadata(
             new ByteArrayInputStream(createDeeplyNestedAtomBytes()));
@@ -53,7 +57,8 @@ public class QuickTimeMetadataReaderTest
         QuickTimeDirectory directory = metadata.getFirstDirectoryOfType(QuickTimeDirectory.class);
 
         assertNotNull(directory);
-        assertTrue(containsError(directory, "Atom nesting too deep."));
+        assertEquals("qt  ", directory.getString(QuickTimeDirectory.TAG_MAJOR_BRAND));
+        assertFalse(directory.getErrors().toString(), directory.hasErrors());
     }
 
     @Test
@@ -65,7 +70,7 @@ public class QuickTimeMetadataReaderTest
         QuickTimeDirectory directory = metadata.getFirstDirectoryOfType(QuickTimeDirectory.class);
 
         assertNotNull(directory);
-        assertFalse(containsError(directory, "Atom nesting too deep."));
+        assertFalse(directory.getErrors().toString(), directory.hasErrors());
         assertEquals(TEST_DURATION, (long)directory.getLong(QuickTimeDirectory.TAG_DURATION));
         assertEquals(TEST_TIME_SCALE, (long)directory.getLong(QuickTimeDirectory.TAG_TIME_SCALE));
     }
@@ -190,20 +195,6 @@ public class QuickTimeMetadataReaderTest
         writeAtomHeader(bytes, offset, 1, type);
         writeUInt32(bytes, offset + 8, size >> 32);
         writeUInt32(bytes, offset + 12, size);
-    }
-
-    /**
-     * Both readers terminate their outermost loop by reading past the end of the stream, which
-     * records an "End of data reached." error on every file, so tests check for the specific
-     * error of interest rather than for the absence of all errors.
-     */
-    private static boolean containsError(Directory directory, String message)
-    {
-        for (String error : directory.getErrors()) {
-            if (error.equals(message))
-                return true;
-        }
-        return false;
     }
 
     private static void writeAtomHeader(byte[] bytes, int offset, long size, String type)

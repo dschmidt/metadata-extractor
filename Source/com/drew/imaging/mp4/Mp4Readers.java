@@ -21,9 +21,11 @@
 package com.drew.imaging.mp4;
 
 import com.drew.imaging.isobmff.IsoBoxContext;
+import com.drew.imaging.isobmff.IsoBoxLayout;
 import com.drew.imaging.isobmff.IsoStandardLayout;
 import com.drew.imaging.isobmff.IsoBoxReader;
 import com.drew.imaging.isobmff.IsoBoxReaders;
+import com.drew.imaging.isobmff.QuickTimeLayout;
 import com.drew.lang.ByteArrayReader;
 import com.drew.lang.ByteTrie;
 import com.drew.lang.DateUtil;
@@ -74,56 +76,8 @@ final class Mp4Readers
 
     private Mp4Readers() {}
 
-    /**
-     * The standard layout, with QuickTime's {@code meta} in {@code moov} and {@code trak}, which
-     * has no FullBox header, its {@code keys}, which has one plus an entry count, and its sound
-     * descriptions of version 1 and 2, which have 16 and 36 more bytes before their boxes than
-     * an audio sample entry, in a {@code stsd} of version 0.
-     */
-    static final class Layout extends IsoStandardLayout
-    {
-        @Override
-        public boolean enterContainer(@NotNull IsoBoxContext box) throws IOException
-        {
-            String type = box.box().type;
-            IsoBoxContext parent = box.parent();
-            String parentType = parent == null || parent.parent() == null ? "" : parent.box().type;
-            SequentialReader payload = box.payload();
-            if (type.equals("meta") && (parentType.equals("moov") || parentType.equals("trak")))
-                return true;
-            if (type.equals("keys") && parentType.equals("meta")) {
-                payload.skip(8);
-                return true;
-            }
-            if (type.equals("stsd")) {
-                box.put(SampleDescriptionVersion.class, new SampleDescriptionVersion(payload.getUInt8()));
-                payload.skip(7);
-                return true;
-            }
-            if (parentType.equals("stsd") && "soun".equals(IsoStandardLayout.handlerType(box))) {
-                SampleDescriptionVersion stsd = parent.get(SampleDescriptionVersion.class);
-                if (stsd != null && stsd.value == 0) {
-                    payload.skip(8);
-                    int version = payload.getUInt16();
-                    payload.skip((version == 1 ? 44 : version == 2 ? 64 : 28) - 10);
-                    return true;
-                }
-            }
-            return super.enterContainer(box);
-        }
-    }
-
-    private static final class SampleDescriptionVersion
-    {
-        final int value;
-
-        SampleDescriptionVersion(int value)
-        {
-            this.value = value;
-        }
-    }
-
-    static final Layout LAYOUT = new Layout();
+    /** The standard layout with QuickTime's deviations, which MP4 files share; see {@link QuickTimeLayout}. */
+    static final IsoBoxLayout LAYOUT = QuickTimeLayout.INSTANCE;
 
     static final IsoBoxReader USER_DATA_READER = new IsoBoxReader()
     {

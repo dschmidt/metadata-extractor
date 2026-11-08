@@ -261,6 +261,8 @@ public class ImageMetadataReader
                 return HeifMetadataReader.readMetadata(IsoInput.of(file));
             case Mp4:
                 return Mp4MetadataReader.readMetadata(IsoInput.of(file));
+            case QuickTime:
+                return QuickTimeMetadataReader.readMetadata(IsoInput.of(file));
             case Crx:
                 return Cr3MetadataReader.readMetadata(IsoInput.of(file));
             default:

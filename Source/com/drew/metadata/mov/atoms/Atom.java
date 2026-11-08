@@ -20,7 +20,9 @@
  */
 package com.drew.metadata.mov.atoms;
 
+import com.drew.imaging.isobmff.IsoBox;
 import com.drew.lang.SequentialReader;
+import com.drew.lang.annotations.NotNull;
 
 import java.io.IOException;
 
@@ -63,5 +65,17 @@ public class Atom
         this.size = atom.size;
         this.type = atom.type;
         this.headerSize = atom.headerSize;
+    }
+
+    /**
+     * The header of a box read by {@link com.drew.imaging.isobmff.IsoBoxIterator}, for the atom
+     * classes of this package. Pass it with the iterator's payload reader, whose positions start
+     * at 0 like those of a reader over the payload bytes.
+     */
+    public Atom(@NotNull IsoBox box)
+    {
+        this.size = box.size;
+        this.type = box.type;
+        this.headerSize = (int) (box.payloadOffset - box.offset);
     }
 }

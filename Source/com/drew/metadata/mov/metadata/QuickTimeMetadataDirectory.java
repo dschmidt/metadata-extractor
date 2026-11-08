@@ -21,6 +21,7 @@
 package com.drew.metadata.mov.metadata;
 
 import com.drew.lang.annotations.NotNull;
+import com.drew.lang.annotations.Nullable;
 import com.drew.metadata.mov.QuickTimeDirectory;
 
 import java.util.HashMap;
@@ -80,6 +81,16 @@ public class QuickTimeMetadataDirectory extends QuickTimeDirectory
 
     @NotNull
     static final HashMap<String, Integer> _tagIntegerMap = new HashMap<String, Integer>();
+
+    /**
+     * The tag for a metadata key, such as {@code com.apple.quicktime.make} from a {@code keys}
+     * box or {@code ©nam} from an iTunes-style list, or {@code null} if it has none.
+     */
+    @Nullable
+    public static Integer getTagType(@NotNull String key)
+    {
+        return _tagIntegerMap.get(key);
+    }
 
     static
     {
