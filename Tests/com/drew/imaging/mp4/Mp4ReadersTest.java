@@ -200,6 +200,90 @@ public class Mp4ReadersTest
     }
 
     @Test
+    public void testTheLocationIsReadFromUserDataAndFromTheKeysInEveryIso6709Form() throws Exception
+    {
+        // degrees with altitude in udta
+        byte[] xyz = ascii("+48.8577-002.2950+035.5/");
+        byte[] udta = box("udta", box("©xyz", int16(xyz.length), int16(0x15C7), xyz));
+        Metadata metadata = Mp4MetadataReader.readMetadata(new ByteArrayInputStream(concat(ftyp("isom"), box("moov", udta))));
+        Mp4Directory directory = metadata.getFirstDirectoryOfType(Mp4Directory.class);
+        assertEquals(48.8577, directory.getDouble(Mp4Directory.TAG_LATITUDE), 1e-9);
+        assertEquals(-2.2950, directory.getDouble(Mp4Directory.TAG_LONGITUDE), 1e-9);
+        assertEquals(35.5, directory.getDouble(Mp4Directory.TAG_ALTITUDE), 1e-9);
+
+        // degrees and minutes, then degrees, minutes and seconds, from Apple's key; no altitude
+        for (String[] form : new String[][] {{"+4851.462-00217.700/", "48.8577", "-2.295"}, {"+485127.72-0021742.0/", "48.8577", "-2.295"}}) {
+            byte[] meta = box("meta", handler("mdta"),
+                box("keys", int32(0), int32(1), key("com.apple.quicktime.location.ISO6709")),
+                box("ilst", box(int32(1), box("data", int32(1), int32(0), ascii(form[0])))));
+            metadata = Mp4MetadataReader.readMetadata(new ByteArrayInputStream(concat(ftyp("qt  "), box("moov", meta))));
+            directory = metadata.getFirstDirectoryOfType(Mp4Directory.class);
+            assertEquals(form[0], Double.parseDouble(form[1]), directory.getDouble(Mp4Directory.TAG_LATITUDE), 1e-4);
+            assertEquals(form[0], Double.parseDouble(form[2]), directory.getDouble(Mp4Directory.TAG_LONGITUDE), 1e-4);
+            assertFalse(directory.containsTag(Mp4Directory.TAG_ALTITUDE));
+            assertEquals(form[0], metadata.getFirstDirectoryOfType(QuickTimeMetadataDirectory.class).getString(QuickTimeMetadataDirectory.TAG_LOCATION_ISO6709));
+            assertNoErrors(metadata);
+        }
+    }
+
+    @Test
+    public void testTheSampleEntryBoxesGiveBitratesAndTheProtectionScheme() throws Exception
+    {
+        // ES_Descriptor (3) with a DecoderConfigDescriptor (4): buffer size, max and average bitrate
+        byte[] esds = box("esds", int32(0),
+            new byte[] {0x03, 23}, int16(1), new byte[] {0},
+            new byte[] {0x04, 15, 0x40, 0x15}, new byte[] {0, 0x18, 0}, int32(192000), int32(128000),
+            new byte[] {0x05, 2, 0x12, 0x10});
+        byte[] soundEntry = box("mp4a", new byte[8], int16(0), int16(0), int32(0), int16(2), int16(16), int16(0), int16(0), int32(44100 << 16), esds);
+        byte[] sound = box("trak", box("mdia", mediaHeader(EPOCH_1904, EPOCH_1904, 44100, 44100), handler("soun"),
+            box("minf", box("stbl", box("stsd", int32(0), int32(1), soundEntry)))));
+        // a protected video entry: the original format and the scheme are in 'sinf'
+        byte[] videoEntry = box("encv", new byte[8], new byte[70],
+            box("btrt", int32(0), int32(5000000), int32(3500000)),
+            box("sinf", box("frma", ascii("avc1")), box("schm", int32(0), ascii("cenc"), int32(0x10000))));
+        byte[] video = box("trak", box("mdia", mediaHeader(EPOCH_1904, EPOCH_1904, 600, 600), handler("vide"),
+            box("minf", box("stbl", box("stsd", int32(0), int32(1), videoEntry)))));
+        Metadata metadata = Mp4MetadataReader.readMetadata(new ByteArrayInputStream(concat(ftyp("isom"), box("moov", sound, video))));
+
+        Mp4SoundDirectory soundDirectory = metadata.getFirstDirectoryOfType(Mp4SoundDirectory.class);
+        assertEquals(192000, soundDirectory.getLong(Mp4SoundDirectory.TAG_MAX_BITRATE));
+        assertEquals(128000, soundDirectory.getLong(Mp4SoundDirectory.TAG_AVERAGE_BITRATE));
+        assertEquals("mp4a", soundDirectory.getString(Mp4SoundDirectory.TAG_AUDIO_FORMAT_RAW));
+        assertFalse(soundDirectory.containsTag(Mp4MediaDirectory.TAG_PROTECTION_SCHEME));
+
+        Mp4VideoDirectory videoDirectory = metadata.getFirstDirectoryOfType(Mp4VideoDirectory.class);
+        assertEquals(5000000, videoDirectory.getLong(Mp4VideoDirectory.TAG_MAX_BITRATE));
+        assertEquals(3500000, videoDirectory.getLong(Mp4VideoDirectory.TAG_AVERAGE_BITRATE));
+        assertEquals("avc1", videoDirectory.getString(Mp4VideoDirectory.TAG_COMPRESSION_TYPE_RAW));
+        assertEquals("cenc", videoDirectory.getString(Mp4MediaDirectory.TAG_PROTECTION_SCHEME));
+        assertNoErrors(metadata);
+    }
+
+    @Test
+    public void testITunesBinaryValuesAreReadByTheirKind() throws Exception
+    {
+        byte[] ilst = box("ilst",
+            box("trkn", box("data", int32(0), int32(0), int16(0), int16(3), int16(12), int16(0))),
+            box("disk", box("data", int32(0), int32(0), int16(0), int16(1), int16(2))),
+            box("cpil", box("data", int32(0), int32(0), new byte[] {1})),
+            box("gnre", box("data", int32(0), int32(0), int16(18))),
+            box("covr", box("data", int32(13), int32(0), new byte[] {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF})),
+            box("©day", box("data", int32(1), int32(0), ascii("2005"))));
+        byte[] meta = box("meta", int32(0), handler("mdir"), ilst);
+        Metadata metadata = Mp4MetadataReader.readMetadata(new ByteArrayInputStream(concat(ftyp("M4A "), box("moov", box("udta", meta)))));
+
+        QuickTimeMetadataDirectory directory = metadata.getFirstDirectoryOfType(QuickTimeMetadataDirectory.class);
+        assertNotNull(directory);
+        assertEquals("3 12", directory.getDescription(QuickTimeMetadataDirectory.getTagType("trkn")));
+        assertEquals("1 2", directory.getDescription(QuickTimeMetadataDirectory.getTagType("disk")));
+        assertEquals(1, directory.getInt(QuickTimeMetadataDirectory.getTagType("cpil")));
+        assertEquals(18, directory.getInt(QuickTimeMetadataDirectory.getTagType("gnre")));
+        assertEquals(3, directory.getByteArray(QuickTimeMetadataDirectory.getTagType("covr")).length);
+        assertEquals("2005", directory.getString(QuickTimeMetadataDirectory.getTagType("©day")));
+        assertNoErrors(metadata);
+    }
+
+    @Test
     public void testTheLivePhotoReaderReadsTheStillImageTimeFromTheMetadataTrack() throws Exception
     {
         // the still image time track: one sample of one tick, presented at 880 of 600 ticks a second by the edit list

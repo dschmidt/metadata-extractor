@@ -53,6 +53,21 @@ No exhaustive MP4 feature-parity check is implied by this documentation migratio
   bytes (types 21, 22 and 65 to 78), 32-bit and 64-bit floats, and arrays of
   32-bit integers. `udta` is also read for the ISO 6709 location (`©xyz`), title,
   comment and Windows Media `Xtra` tags.
+  iTunes atoms with an implicit value type are read by their kind: `trkn` and
+  `disk` as number and count, `gnre` and the flag and ID atoms (`cpil`, `pgap`,
+  `stik`, `tmpo`, `cnID`, …) as integers, the rest as text; `covr` is the
+  image's bytes, as JPEG, PNG or BMP by the value type 13, 14 or 27.
+- Locations are ISO 6709 strings, `©xyz` in `udta` or Apple's
+  `com.apple.quicktime.location.ISO6709` key, in degrees, degrees and minutes,
+  or degrees, minutes and seconds; `Mp4Directory` gets the latitude, longitude
+  and, when present, the altitude in metres.
+- The boxes inside a sample entry are read for what they say about the stream:
+  the maximum and average bitrate of a sound track from the `esds` decoder
+  configuration (also nested in QuickTime's `wave`), of a video track from
+  `btrt`; for a protected entry (`enca`, `encv`, `drms`, `drmi`, …) the
+  original format from `sinf/frma` replaces the entry type in the format tags,
+  and `sinf/schm` gives the protection scheme (`cenc`, `cbcs`, …), or the
+  entry type when there is no `schm`.
 - `XMP_` anywhere a file-level atom can be adds an XMP directory; Canon's `CNTH`
   gives `Mp4Directory` the date and time of its Exif thumbnail.
 - An Apple Live Photo's movie gets a `LivePhotoDirectory` with the still image

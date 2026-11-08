@@ -45,6 +45,9 @@ public class Mp4VideoDirectory extends Mp4MediaDirectory
     /** Frames per second averaged over the media's duration. */
     public static final int TAG_FRAME_RATE                              = 214;
     public static final int TAG_COMPRESSION_TYPE_RAW                    = 215;
+    /** Bits per second from the sample entry's {@code btrt} box. */
+    public static final int TAG_MAX_BITRATE                             = 216;
+    public static final int TAG_AVERAGE_BITRATE                         = 217;
 
     public Mp4VideoDirectory()
     {
@@ -73,6 +76,8 @@ public class Mp4VideoDirectory extends Mp4MediaDirectory
         _tagNameMap.put(TAG_OPCOLOR, "Opcolor");
         _tagNameMap.put(TAG_COLOR_TABLE, "Color Table");
         _tagNameMap.put(TAG_FRAME_RATE, "Frame Rate");
+        _tagNameMap.put(TAG_MAX_BITRATE, "Max Bitrate");
+        _tagNameMap.put(TAG_AVERAGE_BITRATE, "Average Bitrate");
     }
 
     @Override

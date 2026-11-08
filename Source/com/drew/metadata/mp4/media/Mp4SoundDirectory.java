@@ -34,6 +34,9 @@ public class Mp4SoundDirectory extends Mp4MediaDirectory
 
     public static final int TAG_SOUND_BALANCE                           = 305;
     public static final int TAG_AUDIO_FORMAT_RAW                        = 306;
+    /** Bits per second from the sample entry's {@code esds} decoder configuration. */
+    public static final int TAG_MAX_BITRATE                             = 307;
+    public static final int TAG_AVERAGE_BITRATE                         = 308;
 
     public Mp4SoundDirectory()
     {
@@ -52,6 +55,8 @@ public class Mp4SoundDirectory extends Mp4MediaDirectory
         _tagNameMap.put(TAG_AUDIO_SAMPLE_SIZE, "Sample Size");
         _tagNameMap.put(TAG_AUDIO_SAMPLE_RATE, "Sample Rate");
         _tagNameMap.put(TAG_SOUND_BALANCE, "Balance");
+        _tagNameMap.put(TAG_MAX_BITRATE, "Max Bitrate");
+        _tagNameMap.put(TAG_AVERAGE_BITRATE, "Average Bitrate");
     }
 
     @Override

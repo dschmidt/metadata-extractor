@@ -45,6 +45,8 @@ public class Mp4Directory extends Directory {
     public static final int TAG_ROTATION                                = 0x0200;
     public static final int TAG_LATITUDE                                = 0x2001;
     public static final int TAG_LONGITUDE                               = 0x2002;
+    /** Metres above sea level, when the ISO 6709 location has a third coordinate. */
+    public static final int TAG_ALTITUDE                                = 0x2003;
     public static final int TAG_MEDIA_TIME_SCALE                        = 0x0306;
     public static final int TAG_TITLE                                   = 0x3000;
     public static final int TAG_COMMENT                                 = 0x3001;
@@ -88,6 +90,7 @@ public class Mp4Directory extends Directory {
         _tagNameMap.put(TAG_ROTATION, "Rotation");
         _tagNameMap.put(TAG_LATITUDE, "Latitude");
         _tagNameMap.put(TAG_LONGITUDE, "Longitude");
+        _tagNameMap.put(TAG_ALTITUDE, "Altitude");
         _tagNameMap.put(TAG_TITLE, "Title");
         _tagNameMap.put(TAG_COMMENT, "Comment");
         _tagNameMap.put(TAG_SUBTITLE, "Subtitle");

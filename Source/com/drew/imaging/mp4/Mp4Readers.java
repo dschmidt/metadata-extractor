@@ -91,6 +91,12 @@ final class Mp4Readers
 
     private static final String HANDLER_METADATA_DIRECTORY = "mdir";
     private static final String HANDLER_METADATA_DATA = "mdta";
+    private static final String KEY_LOCATION = "com.apple.quicktime.location.ISO6709";
+    /** iTunes list atoms whose implicit-typed value is a small integer: flags, counts and IDs. */
+    private static final List<String> IMPLICIT_INTEGER_KEYS = Arrays.asList(
+        "cpil", "pgap", "pcst", "hdvd", "shwm", "stik", "rtng", "akID", "sfID", "atID", "cnID", "geID", "plID", "cmID", "tmpo", "tvsn", "tves");
+    /** Sample entry types of protected tracks, whose original format is in {@code sinf/frma}. */
+    private static final List<String> PROTECTED_FORMATS = Arrays.asList("drms", "drmi", "enca", "encv", "enct", "encs");
 
     private Mp4Readers() {}
 
@@ -122,11 +128,7 @@ final class Mp4Readers
             if (type.equals("©xyz")) {
                 int length = payload.getUInt16();
                 payload.skip(2);
-                Matcher matcher = COORDINATES.matcher(payload.getString(length, "UTF-8"));
-                if (matcher.find()) {
-                    directory.setDouble(Mp4Directory.TAG_LATITUDE, Double.parseDouble(matcher.group(1)));
-                    directory.setDouble(Mp4Directory.TAG_LONGITUDE, Double.parseDouble(matcher.group(2)));
-                }
+                readLocation(payload.getString(length, "UTF-8"), directory);
             } else if (type.equals("data")) {
                 if (box.box().payloadSize <= 8)
                     return;
@@ -224,6 +226,15 @@ final class Mp4Readers
                 readTimeToSample(box);
             }
         }, SAMPLE_TABLE + "stts"),
+        on(new IsoBoxReaders.Callback()
+        {
+            @Override
+            public void read(@NotNull IsoBoxContext box) throws IOException
+            {
+                readSampleEntryBox(box);
+            }
+        }, SAMPLE_TABLE + "stsd/*/esds", SAMPLE_TABLE + "stsd/*/wave/esds", SAMPLE_TABLE + "stsd/*/btrt",
+           SAMPLE_TABLE + "stsd/*/sinf/frma", SAMPLE_TABLE + "stsd/*/sinf/schm"),
         on(new IsoBoxReaders.Callback()
         {
             @Override
@@ -863,18 +874,32 @@ final class Mp4Readers
             return;
         SequentialReader reader = box.payload();
         int length = (int) (payloadSize - 8);
-        if (meta.handler.equals(HANDLER_METADATA_DIRECTORY)) {
-            // 4 bytes: type indicator, 4 bytes: locale indicator
-            reader.skip(8);
-            meta.directory.setString(tag, new String(reader.getBytes(length)));
+        // type indicator: a type set byte and a 24-bit well-known type; then 4 bytes locale indicator
+        int type = reader.getInt32() & 0xFFFFFF;
+        reader.skip(4);
+        if (type == 0) {
+            // implicit: iTunes' binary values, else text as the list reader always read it
+            if (key.equals("trkn") || key.equals("disk")) {
+                if (length < 6)
+                    return;
+                reader.skip(2);
+                meta.directory.setIntArray(tag, new int[] {reader.getUInt16(), reader.getUInt16()});
+            } else if (key.equals("gnre")) {
+                if (length >= 2)
+                    meta.directory.setInt(tag, reader.getUInt16());
+            } else if (length <= 4 && IMPLICIT_INTEGER_KEYS.contains(key)) {
+                setInteger(meta.directory, tag, reader, length, false);
+            } else {
+                meta.directory.setString(tag, new String(reader.getBytes(length)));
+            }
             return;
         }
-        int type = reader.getInt32();
-        // 4 bytes: locale indicator
-        reader.skip(4);
         switch (type) {
             case 1:
-                meta.directory.setString(tag, reader.getString(length, "UTF-8"));
+                String text = reader.getString(length, "UTF-8");
+                meta.directory.setString(tag, text);
+                if (key.equals(KEY_LOCATION))
+                    readLocation(text, directory(box));
                 break;
             case 13:
             case 14:
@@ -910,7 +935,131 @@ final class Mp4Readers
         }
     }
 
-    private static final Pattern COORDINATES = Pattern.compile("([+-]\\d+\\.\\d+)([+-]\\d+\\.\\d+)");
+    /** ISO 6709 Annex H: latitude, longitude and an optional altitude, each signed; the string ends with a slash. */
+    private static final Pattern COORDINATES = Pattern.compile("([+-]\\d+(?:\\.\\d+)?)([+-]\\d+(?:\\.\\d+)?)([+-]\\d+(?:\\.\\d+)?)?");
+
+    /**
+     * Sets the latitude, longitude and altitude of an ISO 6709 string such as
+     * {@code +48.8577+002.2950+035.000/}. Latitude and longitude are degrees, degrees and
+     * minutes, or degrees, minutes and seconds, told apart by the digits before the point: two
+     * (three for longitude) for degrees alone, two more for minutes, four more for seconds.
+     */
+    static void readLocation(@NotNull String iso6709, @NotNull Mp4Directory directory)
+    {
+        Matcher matcher = COORDINATES.matcher(iso6709);
+        if (!matcher.find())
+            return;
+        directory.setDouble(Mp4Directory.TAG_LATITUDE, angle(matcher.group(1), 2));
+        directory.setDouble(Mp4Directory.TAG_LONGITUDE, angle(matcher.group(2), 3));
+        if (matcher.group(3) != null)
+            directory.setDouble(Mp4Directory.TAG_ALTITUDE, Double.parseDouble(matcher.group(3)));
+    }
+
+    private static double angle(@NotNull String token, int degreeDigits)
+    {
+        int point = token.indexOf('.');
+        String whole = point < 0 ? token.substring(1) : token.substring(1, point);
+        String fraction = point < 0 ? "" : token.substring(point);
+        double value;
+        if (whole.length() == degreeDigits + 2) {
+            value = Integer.parseInt(whole.substring(0, degreeDigits))
+                + Double.parseDouble(whole.substring(degreeDigits) + fraction) / 60;
+        } else if (whole.length() == degreeDigits + 4) {
+            value = Integer.parseInt(whole.substring(0, degreeDigits))
+                + Integer.parseInt(whole.substring(degreeDigits, degreeDigits + 2)) / 60.0
+                + Double.parseDouble(whole.substring(degreeDigits + 2) + fraction) / 3600;
+        } else {
+            value = Double.parseDouble(whole + fraction);
+        }
+        return token.charAt(0) == '-' ? -value : value;
+    }
+
+    /**
+     * The boxes inside a sound or video sample entry that say more about the stream: the
+     * bitrates of {@code esds} (MPEG-4 audio; QuickTime nests it in {@code wave}) and
+     * {@code btrt}, and for a protected entry the original format in {@code sinf/frma} and the
+     * scheme in {@code sinf/schm}.
+     */
+    private static void readSampleEntryBox(@NotNull IsoBoxContext box) throws IOException
+    {
+        Mp4MediaDirectory media = box.get(Mp4MediaDirectory.class);
+        if (media == null)
+            return;
+        String type = box.box().type;
+        SequentialReader payload = box.payload();
+        if (type.equals("btrt")) {
+            if (!(media instanceof Mp4VideoDirectory))
+                return;
+            payload.skip(4); // decoding buffer size
+            media.setLong(Mp4VideoDirectory.TAG_MAX_BITRATE, payload.getUInt32());
+            media.setLong(Mp4VideoDirectory.TAG_AVERAGE_BITRATE, payload.getUInt32());
+        } else if (type.equals("esds")) {
+            if (media instanceof Mp4SoundDirectory)
+                readDecoderConfiguration(payload, box.box().payloadSize, (Mp4SoundDirectory) media);
+        } else if (type.equals("frma")) {
+            String original = payload.getString(4);
+            IsoBoxContext entry = box.parent().parent();
+            if (!PROTECTED_FORMATS.contains(entry.box().type))
+                return;
+            if (media instanceof Mp4SoundDirectory) {
+                Mp4Dictionary.setLookup(Mp4SoundDirectory.TAG_AUDIO_FORMAT, original, media);
+                media.setString(Mp4SoundDirectory.TAG_AUDIO_FORMAT_RAW, original);
+            } else if (media instanceof Mp4VideoDirectory) {
+                Mp4Dictionary.setLookup(Mp4VideoDirectory.TAG_COMPRESSION_TYPE, original, media);
+                media.setString(Mp4VideoDirectory.TAG_COMPRESSION_TYPE_RAW, original);
+            }
+            if (!media.containsTag(Mp4MediaDirectory.TAG_PROTECTION_SCHEME))
+                media.setString(Mp4MediaDirectory.TAG_PROTECTION_SCHEME, entry.box().type);
+        } else if (type.equals("schm")) {
+            payload.skip(4); // version and flags
+            media.setString(Mp4MediaDirectory.TAG_PROTECTION_SCHEME, payload.getString(4));
+        }
+    }
+
+    /**
+     * ISO/IEC 14496-1: the ES_Descriptor (tag 3) of {@code esds} holds a DecoderConfigDescriptor
+     * (tag 4) with the buffer size and the maximum and average bitrates. Descriptor lengths are
+     * 7-bit groups with a continuation bit.
+     */
+    private static void readDecoderConfiguration(@NotNull SequentialReader payload, long size, @NotNull Mp4SoundDirectory sound) throws IOException
+    {
+        if (size < 4 + 2 + 3 + 2 + 13)
+            return;
+        payload.skip(4); // version and flags
+        if (payload.getUInt8() != 0x03)
+            return;
+        descriptorLength(payload);
+        payload.skip(2); // ES_ID
+        int flags = payload.getUInt8();
+        if ((flags & 0x80) != 0)
+            payload.skip(2); // dependsOn_ES_ID
+        if ((flags & 0x40) != 0)
+            payload.skip(payload.getUInt8()); // URL
+        if ((flags & 0x20) != 0)
+            payload.skip(2); // OCR_ES_Id
+        if (payload.getUInt8() != 0x04)
+            return;
+        descriptorLength(payload);
+        payload.skip(5); // object type, stream type and flags, buffer size
+        long maxBitrate = payload.getUInt32();
+        long averageBitrate = payload.getUInt32();
+        if (maxBitrate > 0)
+            sound.setLong(Mp4SoundDirectory.TAG_MAX_BITRATE, maxBitrate);
+        if (averageBitrate > 0)
+            sound.setLong(Mp4SoundDirectory.TAG_AVERAGE_BITRATE, averageBitrate);
+    }
+
+    private static int descriptorLength(@NotNull SequentialReader payload) throws IOException
+    {
+        int length = 0;
+        for (int i = 0; i < 4; i++) {
+            int b = payload.getUInt8();
+            length = (length << 7) | (b & 0x7F);
+            if ((b & 0x80) == 0)
+                break;
+        }
+        return length;
+    }
 
     /** A Windows {@code Xtra} box: properties of the Windows file properties dialog, as UTF-16LE strings. */
     private static void readXtra(@NotNull SequentialReader reader, long length, @NotNull Mp4Directory directory) throws IOException

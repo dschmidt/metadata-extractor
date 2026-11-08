@@ -30,6 +30,12 @@ public abstract class Mp4MediaDirectory extends Mp4Directory
     public static final int TAG_MODIFICATION_TIME = 102;
     public static final int TAG_DURATION = 103;
     public static final int TAG_LANGUAGE_CODE = 104;
+    /**
+     * The scheme type of a protected track's {@code sinf} ({@code cenc}, {@code cbcs}, Apple's
+     * {@code drms}, and so on), or the protected sample entry's own type when it names no scheme.
+     * The track's format tag then holds the original format from {@code frma}.
+     */
+    public static final int TAG_PROTECTION_SCHEME = 105;
 
     protected static void addMp4MediaTags(HashMap<Integer, String> map)
     {
@@ -37,5 +43,6 @@ public abstract class Mp4MediaDirectory extends Mp4Directory
         map.put(TAG_MODIFICATION_TIME, "Modification Time");
         map.put(TAG_DURATION, "Duration");
         map.put(TAG_LANGUAGE_CODE, "ISO 639-2 Language Code");
+        map.put(TAG_PROTECTION_SCHEME, "Protection Scheme");
     }
 }
