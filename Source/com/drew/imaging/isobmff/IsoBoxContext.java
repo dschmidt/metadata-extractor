@@ -413,10 +413,23 @@ public final class IsoBoxContext
         _root._stopped = true;
     }
 
-    /** The rest of the payload as an array. */
+    /**
+     * The rest of the payload as an array. It fails, and the box is reported, when more bytes
+     * remain than the walk's limit on what a reader may read into memory
+     * ({@link IsoBoxReaders#DEFAULT_MAX_BUFFERED_PAYLOAD} unless the walk was built with another),
+     * so a box that claims a giant size costs no memory; {@link #payload()} streams without limit.
+     */
     @NotNull
     public byte[] payloadBytes() throws IOException
     {
+        IsoBoxReaders readers = _root._readers;
+        long payloadSize = box().payloadSize;
+        if (readers != null && payloadSize >= 0) {
+            long remaining = payloadSize - (_payload == null ? 0 : _payload.getPosition());
+            if (remaining > readers.maxBufferedPayload())
+                throw new IOException("Payload (" + remaining + " bytes) is larger than the " + readers.maxBufferedPayload()
+                    + " bytes a reader may read into memory");
+        }
         if (_iterator != null)
             return _iterator.payloadBytes();
         SequentialReader payload = payload();

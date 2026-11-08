@@ -77,6 +77,13 @@ public class QuickTimeMetadataReader
         return new IsoBoxReaders(QuickTimeLayout.INSTANCE, readers);
     }
 
+    /** As {@link #compile(Iterable)}, with the most bytes of a box's payload read into memory for a reader. */
+    @NotNull
+    public static IsoBoxReaders compile(@NotNull Iterable<? extends IsoBoxReader> readers, long maxBufferedPayload)
+    {
+        return new IsoBoxReaders(QuickTimeLayout.INSTANCE, readers, maxBufferedPayload);
+    }
+
     /** Reads {@code input}; see {@link IsoInput} for the kinds of input. */
     @NotNull
     public static Metadata readMetadata(@NotNull IsoInput input) throws IOException

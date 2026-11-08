@@ -137,6 +137,17 @@ public class Cr3MetadataReader
         return new IsoBoxReaders(Cr3Readers.LAYOUT, readers);
     }
 
+    /**
+     * As {@link #compile(Iterable)}, with the most bytes of a box's payload that are read into
+     * memory for a reader, in place of {@link IsoBoxReaders#DEFAULT_MAX_BUFFERED_PAYLOAD}; a
+     * larger box is reported and skipped.
+     */
+    @NotNull
+    public static IsoBoxReaders compile(@NotNull Iterable<? extends IsoBoxReader> readers, long maxBufferedPayload)
+    {
+        return new IsoBoxReaders(Cr3Readers.LAYOUT, readers, maxBufferedPayload);
+    }
+
     @NotNull
     public static Metadata readMetadata(@NotNull InputStream inputStream)
     {

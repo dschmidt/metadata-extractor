@@ -68,8 +68,16 @@ No exhaustive MP4 feature-parity check is implied by this documentation migratio
   original format from `sinf/frma` replaces the entry type in the format tags,
   and `sinf/schm` gives the protection scheme (`cenc`, `cbcs`, …), or the
   entry type when there is no `schm`.
+  A four-character code that is not printable ASCII is described as the hex of
+  its bytes.
 - `XMP_` anywhere a file-level atom can be adds an XMP directory; Canon's `CNTH`
   gives `Mp4Directory` the date and time of its Exif thumbnail.
+- `Mp4MetadataReader.compile(readers, maxBufferedPayload)` (and the same on the
+  HEIF, CR3 and QuickTime readers) bounds what a reader may read into memory at
+  once: `payloadBytes()` of a larger box fails and the box is reported, payloads
+  buffered for several readers or kept for a later `meta` or `moov` are bounded
+  the same way, while `payload()` streams any size. The default is
+  `IsoBoxReaders.DEFAULT_MAX_BUFFERED_PAYLOAD`, 64 MiB.
 - An Apple Live Photo's movie gets a `LivePhotoDirectory` with the still image
   time: the `mebx` track keyed `com.apple.quicktime.still-image-time` holds one
   sample, and the empty edit before it in `elst` is the moment the photo was

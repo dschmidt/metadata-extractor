@@ -27,6 +27,7 @@ import com.drew.metadata.Directory;
 import com.drew.metadata.Metadata;
 import com.drew.metadata.mov.metadata.QuickTimeMetadataDirectory;
 import com.drew.metadata.mp4.LivePhotoDirectory;
+import com.drew.metadata.mp4.Mp4Descriptor;
 import com.drew.metadata.mp4.Mp4Directory;
 import com.drew.metadata.mp4.media.Mp4MediaDirectory;
 import com.drew.metadata.mp4.media.Mp4MetaDirectory;
@@ -257,6 +258,42 @@ public class Mp4ReadersTest
         assertEquals("avc1", videoDirectory.getString(Mp4VideoDirectory.TAG_COMPRESSION_TYPE_RAW));
         assertEquals("cenc", videoDirectory.getString(Mp4MediaDirectory.TAG_PROTECTION_SCHEME));
         assertNoErrors(metadata);
+    }
+
+    @Test
+    public void testAFourCharacterCodeThatIsNotPrintableIsDescribedInHex() throws Exception
+    {
+        byte[] videoEntry = box(new byte[] {0, 0, 0, 0}, new byte[8], new byte[70]);
+        byte[] video = box("trak", box("mdia", mediaHeader(EPOCH_1904, EPOCH_1904, 600, 600), handler("vide"),
+            box("minf", box("stbl", box("stsd", int32(0), int32(1), videoEntry)))));
+        Metadata metadata = Mp4MetadataReader.readMetadata(new ByteArrayInputStream(concat(ftyp("isom"), box("moov", video))));
+
+        Mp4VideoDirectory directory = metadata.getFirstDirectoryOfType(Mp4VideoDirectory.class);
+        assertEquals("0x00000000", directory.getDescription(Mp4VideoDirectory.TAG_COMPRESSION_TYPE_RAW));
+        assertEquals("avc1", Mp4Descriptor.getFourCCDescription("avc1"));
+        assertNoErrors(metadata);
+    }
+
+    @Test
+    public void testTheBufferLimitOfACompiledWalkStopsAReaderFromReadingALargerPayloadIntoMemory() throws Exception
+    {
+        // the XMP reader takes the whole payload at once, the movie header reads its fields from the stream
+        byte[] xmp = box("XMP_", new byte[200]);
+        byte[] mvhd = box("mvhd", int32(0), int32(0), int32(0), int32(600), int32(1200), new byte[80]);
+        byte[] file = concat(ftyp("qt  "), box("moov", mvhd, xmp));
+        Metadata metadata = new Metadata();
+        Mp4MetadataReader.compile(Mp4MetadataReader.ALL_READERS, 128).read(IsoInput.of(new ByteArrayInputStream(file)), Mp4MetadataReader.newRoot(metadata, null));
+
+        Mp4Directory directory = metadata.getFirstDirectoryOfType(Mp4Directory.class);
+        assertEquals(1200, directory.getLong(Mp4Directory.TAG_DURATION));
+        assertNull(metadata.getFirstDirectoryOfType(com.drew.metadata.xmp.XmpDirectory.class));
+        String error = directory.getErrors().iterator().next();
+        assertTrue(error, error.contains("XMP_") && error.contains("200 bytes") && error.contains("128 bytes"));
+
+        // with the default limit the same payload reaches the XMP reader, which rejects the zeros itself
+        Metadata unlimited = Mp4MetadataReader.readMetadata(new ByteArrayInputStream(file));
+        assertNotNull(unlimited.getFirstDirectoryOfType(com.drew.metadata.xmp.XmpDirectory.class));
+        assertFalse(unlimited.getFirstDirectoryOfType(Mp4Directory.class).hasErrors());
     }
 
     @Test

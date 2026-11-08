@@ -76,6 +76,17 @@ public class Mp4MetadataReader
         return new IsoBoxReaders(Mp4Readers.LAYOUT, readers);
     }
 
+    /**
+     * As {@link #compile(Iterable)}, with the most bytes of a box's payload that are read into
+     * memory for a reader, in place of {@link IsoBoxReaders#DEFAULT_MAX_BUFFERED_PAYLOAD}; a
+     * larger box is reported and skipped.
+     */
+    @NotNull
+    public static IsoBoxReaders compile(@NotNull Iterable<? extends IsoBoxReader> readers, long maxBufferedPayload)
+    {
+        return new IsoBoxReaders(Mp4Readers.LAYOUT, readers, maxBufferedPayload);
+    }
+
     /** Reads {@code input}; a file or a random access reader is also read by position for sample data a reader asks for. */
     @NotNull
     public static Metadata readMetadata(@NotNull IsoInput input) throws IOException

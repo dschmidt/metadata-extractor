@@ -22,6 +22,7 @@ package com.drew.metadata.mp4.media;
 
 import com.drew.lang.annotations.NotNull;
 import com.drew.metadata.TagDescriptor;
+import com.drew.metadata.mp4.Mp4Descriptor;
 
 import static com.drew.metadata.mp4.media.Mp4VideoDirectory.*;
 
@@ -45,6 +46,9 @@ public class Mp4VideoDescriptor extends TagDescriptor<Mp4VideoDirectory>
                 return getColorTableDescription();
             case TAG_GRAPHICS_MODE:
                 return getGraphicsModeDescription();
+            case TAG_COMPRESSION_TYPE_RAW:
+            case TAG_PROTECTION_SCHEME:
+                return Mp4Descriptor.getFourCCDescription(_directory.getString(tagType));
             default:
                 return super.getDescription(tagType);
         }

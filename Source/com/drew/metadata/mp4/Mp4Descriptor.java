@@ -36,6 +36,25 @@ public class Mp4Descriptor extends TagDescriptor<Mp4Directory> {
         super(directory);
     }
 
+    /**
+     * A four-character code as it is, when its characters are printable ASCII, else as the hex
+     * of its bytes, such as {@code 0x00000000}; {@code null} for {@code null}.
+     */
+    public static String getFourCCDescription(String code)
+    {
+        if (code == null)
+            return null;
+        boolean printable = true;
+        for (int i = 0; i < code.length() && printable; i++)
+            printable = code.charAt(i) >= 0x20 && code.charAt(i) <= 0x7E;
+        if (printable)
+            return code;
+        StringBuilder hex = new StringBuilder("0x");
+        for (int i = 0; i < code.length(); i++)
+            hex.append(String.format("%02X", code.charAt(i) & 0xFF));
+        return hex.toString();
+    }
+
     @Override
     public String getDescription(int tagType)
     {

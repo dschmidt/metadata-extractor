@@ -21,11 +21,24 @@
 package com.drew.metadata.mp4.media;
 
 import com.drew.metadata.TagDescriptor;
+import com.drew.metadata.mp4.Mp4Descriptor;
 
 public class Mp4SoundDescriptor extends TagDescriptor<Mp4SoundDirectory>
 {
     public Mp4SoundDescriptor(Mp4SoundDirectory directory)
     {
         super(directory);
+    }
+
+    @Override
+    public String getDescription(int tagType)
+    {
+        switch (tagType) {
+            case Mp4SoundDirectory.TAG_AUDIO_FORMAT_RAW:
+            case Mp4MediaDirectory.TAG_PROTECTION_SCHEME:
+                return Mp4Descriptor.getFourCCDescription(_directory.getString(tagType));
+            default:
+                return super.getDescription(tagType);
+        }
     }
 }

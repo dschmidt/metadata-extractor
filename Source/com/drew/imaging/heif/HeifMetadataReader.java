@@ -114,6 +114,18 @@ public class HeifMetadataReader
     public static IsoBoxReaders compile(@NotNull Iterable<? extends IsoBoxReader> readers,
                                         @NotNull Iterable<? extends IsoItems.ItemReader> itemReaders)
     {
+        return compile(readers, itemReaders, IsoBoxReaders.DEFAULT_MAX_BUFFERED_PAYLOAD);
+    }
+
+    /**
+     * As {@link #compile(Iterable, Iterable)}, with the most bytes of a box's payload that are
+     * read into memory for a reader, in place of {@link IsoBoxReaders#DEFAULT_MAX_BUFFERED_PAYLOAD};
+     * a larger box is reported and skipped.
+     */
+    @NotNull
+    public static IsoBoxReaders compile(@NotNull Iterable<? extends IsoBoxReader> readers,
+                                        @NotNull Iterable<? extends IsoItems.ItemReader> itemReaders, long maxBufferedPayload)
+    {
         List<IsoItems.ItemReader> items = new java.util.ArrayList<IsoItems.ItemReader>();
         for (IsoItems.ItemReader reader : itemReaders)
             items.add(reader);
@@ -121,7 +133,7 @@ public class HeifMetadataReader
         for (IsoBoxReader reader : readers)
             boxes.add(reader);
         boxes.add(itemReaders(items));
-        return new IsoBoxReaders(IsoStandardLayout.INSTANCE, boxes);
+        return new IsoBoxReaders(IsoStandardLayout.INSTANCE, boxes, maxBufferedPayload);
     }
 
     /**

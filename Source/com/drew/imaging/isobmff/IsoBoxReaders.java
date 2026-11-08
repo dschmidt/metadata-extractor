@@ -99,6 +99,12 @@ public final class IsoBoxReaders
     @NotNull
     private final IsoBoxLayout _layout;
     private final long _maxBufferedPayload;
+
+    /** The most bytes of a payload a reader may read into memory at once; see {@link IsoBoxContext#payloadBytes}. */
+    long maxBufferedPayload()
+    {
+        return _maxBufferedPayload;
+    }
     private final Node _root = new Node();
     /** Every reader, in the order the readers of one box run: the layout's first, then as passed. */
     private final List<IsoBoxReader> _order = new ArrayList<IsoBoxReader>();
