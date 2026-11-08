@@ -148,6 +148,13 @@ public final class IsoSamples
             return languageCode;
         }
 
+        /** The language as an ISO 639-2/T code, or {@code null}; see {@link IsoLanguageCode#decode}. */
+        @Nullable
+        public String getLanguage()
+        {
+            return IsoLanguageCode.decode(languageCode);
+        }
+
         /**
          * Whether another track refers to this one with a {@code tref} reference of
          * {@code type}, such as {@code chap} for a QuickTime chapter track. Known once

@@ -25,6 +25,7 @@ import com.drew.imaging.isobmff.IsoBoxLayout;
 import com.drew.imaging.isobmff.IsoStandardLayout;
 import com.drew.imaging.isobmff.IsoBoxReader;
 import com.drew.imaging.isobmff.IsoBoxReaders;
+import com.drew.imaging.isobmff.IsoLanguageCode;
 import com.drew.imaging.isobmff.QuickTimeLayout;
 import com.drew.imaging.jpeg.JpegMetadataReader;
 import com.drew.imaging.jpeg.JpegProcessingException;
@@ -1208,11 +1209,7 @@ final class Mp4Readers
             header.modificationTime = version == 1 ? reader.getInt64() : reader.getUInt32();
             header.timeScale = version == 1 ? (long) reader.getInt32() : reader.getUInt32();
             header.duration = version == 1 ? reader.getInt64() : reader.getUInt32();
-            int bits = reader.getInt16();
-            // three 5-bit letters, each offset by 0x60; all zero is no language, which some QuickTime files write
-            if ((bits & 0x7FFF) != 0)
-                header.language = new String(new char[] {
-                    (char) (((bits & 0x7C00) >> 10) + 0x60), (char) (((bits & 0x03E0) >> 5) + 0x60), (char) ((bits & 0x001F) + 0x60)});
+            header.language = IsoLanguageCode.decode(reader.getUInt16() & 0x7FFF);
             return header;
         }
 

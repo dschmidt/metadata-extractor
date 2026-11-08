@@ -37,7 +37,9 @@ No exhaustive MP4 feature-parity check is implied by this documentation migratio
   and QuickTime's `tmcd` (`Mp4TimecodeDirectory`), `sbtl`
   (`Mp4SubtitleDirectory`) and `musi` (`Mp4MusicDirectory`). The track's own
   `mdhd` dates the directory and gives the time scale of `stts`, whichever of the
-  two comes first; a language of all zero bits is left out. The video frame rate
+  two comes first. The language is an ISO 639-2/T code, from the packed letters
+  or from a QuickTime Macintosh language code (below 0x400, where 0 is English),
+  as `IsoLanguageCode` decodes both. The video frame rate
   is the sample count over the media's duration, as ExifTool and ffprobe report
   it; the most common sample duration would misstate tracks timed in
   milliseconds, where 30 frames a second alternate between 33 and 34.
