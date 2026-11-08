@@ -52,19 +52,20 @@ public class QuickTimeMetadataReader
     public static final List<IsoBoxReader> ALL_READERS = QuickTimeReaders.ALL_READERS;
 
     /**
-     * Reads the still image time of an Apple Live Photo's movie into a
-     * {@link com.drew.metadata.mov.media.QuickTimeLivePhotoDirectory}. Not among
-     * {@link #ALL_READERS}: the time is the position of a sample in {@code mdat}, and Apple writes
+     * Adds the transform from the video frame to the photo, and its reference dimensions, to the
+     * {@link com.drew.metadata.mov.media.QuickTimeLivePhotoDirectory} of an Apple Live Photo's
+     * movie. {@link #ALL_READERS} give that directory its still image time from {@code moov}
+     * alone; the transform lies in the track's one sample in {@code mdat}, and Apple writes
      * {@code mdat} before {@code moov}, so from a stream the walk would have to keep {@code mdat}
      * in memory for every movie read (see {@link IsoBoxReader#getLocatingPaths}). Add it to the
      * readers of {@link #compile} for a {@link IsoInput} of a file, which is read by position:
      * <pre>
      * List&lt;IsoBoxReader&gt; readers = new ArrayList&lt;IsoBoxReader&gt;(QuickTimeMetadataReader.ALL_READERS);
-     * readers.add(QuickTimeMetadataReader.LIVE_PHOTO_READER);
+     * readers.add(QuickTimeMetadataReader.LIVE_PHOTO_TRANSFORM_READER);
      * Metadata metadata = QuickTimeMetadataReader.readMetadata(IsoInput.of(file), readers);
      * </pre>
      */
-    public static final IsoBoxReader LIVE_PHOTO_READER = IsoSamples.readers(new LivePhotoSampleReader(), 16);
+    public static final IsoBoxReader LIVE_PHOTO_TRANSFORM_READER = IsoSamples.readers(new LivePhotoSampleReader(), 16);
 
     private static final IsoBoxReaders DEFAULT_READERS = compile(ALL_READERS);
 

@@ -36,11 +36,13 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Reads the still image time of an Apple Live Photo's movie from its timed metadata track: a
- * {@code mebx} track whose sample entry names the key {@code com.apple.quicktime.still-image-time}
- * holds one sample, and the moment of the movie it is presented at, by the track's edit list, is
- * when the photo was taken. The same sample carries the transform from the video frame to the
- * photo and the dimensions it refers to. Fills one {@link QuickTimeLivePhotoDirectory} per file.
+ * Reads the sample of an Apple Live Photo's still image track: a {@code mebx} track whose sample
+ * entry names the key {@code com.apple.quicktime.still-image-time}. The sample carries the
+ * transform from the video frame to the photo and the dimensions it refers to; its still image
+ * time is a marker, and the moment it stands for comes from the track's edit list, which
+ * {@link QuickTimeReaders} reads from {@code moov} alone. This reader adds the transform and the
+ * dimensions to that {@link QuickTimeLivePhotoDirectory}, or makes one with the time as well when
+ * the default readers did not run.
  */
 final class LivePhotoSampleReader implements IsoSamples.SampleReader
 {
@@ -62,10 +64,11 @@ final class LivePhotoSampleReader implements IsoSamples.SampleReader
     public void readSample(@NotNull IsoBoxContext file, @NotNull IsoSamples.Track track, @NotNull IsoSamples.Sample sample,
                            @NotNull SequentialReader data) throws IOException
     {
-        if (file.get(QuickTimeLivePhotoDirectory.class) != null)
+        QuickTimeLivePhotoDirectory existing = file.get(QuickTimeLivePhotoDirectory.class);
+        if (existing != null && existing.containsTag(QuickTimeLivePhotoDirectory.TAG_STILL_IMAGE_TRANSFORM))
             return;
         Map<Integer, String> keys = keys(track);
-        QuickTimeLivePhotoDirectory directory = new QuickTimeLivePhotoDirectory();
+        QuickTimeLivePhotoDirectory directory = existing != null ? existing : new QuickTimeLivePhotoDirectory();
         long size = sample.getSize();
         while (size - data.getPosition() >= 8) {
             long entrySize = data.getUInt32();
@@ -76,7 +79,7 @@ final class LivePhotoSampleReader implements IsoSamples.SampleReader
             String name = keys.get(key);
             if (KEY_STILL_IMAGE_TIME.equals(name)) {
                 long time = sample.getPresentationTime() >= 0 ? sample.getPresentationTime() : sample.getTime();
-                if (track.getTimescale() > 0)
+                if (track.getTimescale() > 0 && !directory.containsTag(QuickTimeLivePhotoDirectory.TAG_STILL_IMAGE_TIME))
                     directory.setRational(QuickTimeLivePhotoDirectory.TAG_STILL_IMAGE_TIME, new Rational(time, track.getTimescale()));
             } else if (KEY_TRANSFORM.equals(name) && value.length == 9 * 8) {
                 SequentialReader reader = new SequentialByteArrayReader(value);
@@ -91,22 +94,29 @@ final class LivePhotoSampleReader implements IsoSamples.SampleReader
                     new int[] {Math.round(reader.getFloat32()), Math.round(reader.getFloat32())});
             }
         }
-        if (directory.getTagCount() == 0)
+        if (directory.getTagCount() == 0 || existing != null)
             return;
         file.metadata().addDirectory(directory);
         file.put(QuickTimeLivePhotoDirectory.class, directory);
     }
 
-    /**
-     * The keys of a {@code mebx} sample entry, by the local key ID the samples use: each box of
-     * its {@code keys} is named by the ID and holds a {@code keyd} with the namespace and the key.
-     */
     @NotNull
     static Map<Integer, String> keys(@NotNull IsoSamples.Track track)
     {
-        Map<Integer, String> keys = new HashMap<Integer, String>();
         byte[] entry = track.getSampleEntry();
-        if (entry == null || entry.length <= SAMPLE_ENTRY_FIELDS)
+        return entry == null ? new HashMap<Integer, String>() : keys(entry);
+    }
+
+    /**
+     * The keys of a {@code mebx} sample entry (its fields after size and type), by the local key
+     * ID the samples use: each box of its {@code keys} is named by the ID and holds a {@code keyd}
+     * with the namespace and the key.
+     */
+    @NotNull
+    static Map<Integer, String> keys(@NotNull byte[] entry)
+    {
+        Map<Integer, String> keys = new HashMap<Integer, String>();
+        if (entry.length <= SAMPLE_ENTRY_FIELDS)
             return keys;
         try {
             IsoBoxIterator boxes = new IsoBoxIterator(entry, SAMPLE_ENTRY_FIELDS, entry.length);

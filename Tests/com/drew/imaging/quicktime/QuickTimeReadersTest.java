@@ -209,10 +209,8 @@ public class QuickTimeReadersTest
         byte[] mvhd = box("mvhd", int32(0), int32(0), int32(0), int32(600), int32(881), new byte[80]);
         byte[] file = livePhotoFile(mvhd, elst, keys, sample);
 
-        List<IsoBoxReader> readers = new ArrayList<IsoBoxReader>(QuickTimeMetadataReader.ALL_READERS);
-        readers.add(QuickTimeMetadataReader.LIVE_PHOTO_READER);
-        Metadata metadata = QuickTimeMetadataReader.readMetadata(IsoInput.of(new ByteArrayInputStream(file)), readers);
-
+        // the default readers give the time from moov alone, without reading the sample
+        Metadata metadata = QuickTimeMetadataReader.readMetadata(new ByteArrayInputStream(file));
         QuickTimeLivePhotoDirectory directory = metadata.getFirstDirectoryOfType(QuickTimeLivePhotoDirectory.class);
         assertNotNull(directory);
         Rational time = directory.getRational(QuickTimeLivePhotoDirectory.TAG_STILL_IMAGE_TIME);
@@ -220,12 +218,65 @@ public class QuickTimeReadersTest
         assertEquals(880, time.getNumerator());
         assertEquals(600, time.getDenominator());
         assertEquals("1.467 seconds", directory.getDescription(QuickTimeLivePhotoDirectory.TAG_STILL_IMAGE_TIME));
+        assertEquals(1, directory.getTagCount());
+        assertNoErrors(metadata);
+
+        // the transform reader adds the sample's transform and dimensions to the same directory
+        List<IsoBoxReader> readers = new ArrayList<IsoBoxReader>(QuickTimeMetadataReader.ALL_READERS);
+        readers.add(QuickTimeMetadataReader.LIVE_PHOTO_TRANSFORM_READER);
+        metadata = QuickTimeMetadataReader.readMetadata(IsoInput.of(new ByteArrayInputStream(file)), readers);
+        directory = metadata.getFirstDirectoryOfType(QuickTimeLivePhotoDirectory.class);
+        assertNotNull(directory);
+        assertEquals(1, ((Collection<?>) metadata.getDirectoriesOfType(QuickTimeLivePhotoDirectory.class)).size());
+        assertEquals("1.467 seconds", directory.getDescription(QuickTimeLivePhotoDirectory.TAG_STILL_IMAGE_TIME));
         assertEquals("1920 x 1440", directory.getDescription(QuickTimeLivePhotoDirectory.TAG_STILL_IMAGE_REFERENCE_DIMENSIONS));
         assertEquals(4.5, ((double[]) directory.getObject(QuickTimeLivePhotoDirectory.TAG_STILL_IMAGE_TRANSFORM))[2], 0d);
         assertNoErrors(metadata);
+    }
 
-        // the reader is not among the defaults
-        assertNull(QuickTimeMetadataReader.readMetadata(new ByteArrayInputStream(file)).getFirstDirectoryOfType(QuickTimeLivePhotoDirectory.class));
+    @Test
+    public void testAStillImageTrackWithoutAnEmptyEditIsTheFirstFrame() throws Exception
+    {
+        byte[] keys = box("keys", box(int32(1), box("keyd", ascii("mdta"), ascii("com.apple.quicktime.still-image-time"))));
+        byte[] elst = box("elst", int32(0), int32(1), int32(1), int32(0), int32(0x10000));
+        byte[] mvhd = box("mvhd", int32(0), int32(0), int32(0), int32(600), int32(1), new byte[80]);
+        Metadata metadata = QuickTimeMetadataReader.readMetadata(new ByteArrayInputStream(livePhotoFile(mvhd, elst, keys, new byte[] {0, 0, 0, 9, 0, 0, 0, 1, (byte) 0xff})));
+
+        QuickTimeLivePhotoDirectory directory = metadata.getFirstDirectoryOfType(QuickTimeLivePhotoDirectory.class);
+        assertNotNull(directory);
+        assertEquals("0.000 seconds", directory.getDescription(QuickTimeLivePhotoDirectory.TAG_STILL_IMAGE_TIME));
+        assertNoErrors(metadata);
+    }
+
+    @Test
+    public void testAStillImageTrackWithSeveralSamplesGivesNoTime() throws Exception
+    {
+        byte[] keys = box("keys", box(int32(1), box("keyd", ascii("mdta"), ascii("com.apple.quicktime.still-image-time"))));
+        byte[] elst = box("elst", int32(0), int32(2), int32(880), int32(-1), int32(0x10000), int32(2), int32(0), int32(0x10000));
+        byte[] mvhd = box("mvhd", int32(0), int32(0), int32(0), int32(600), int32(882), new byte[80]);
+        // the same file, but the time-to-sample table declares two samples
+        byte[] file = livePhotoFile(mvhd, elst, keys, new byte[] {0, 0, 0, 9, 0, 0, 0, 1, (byte) 0xff});
+        byte[] stts = box("stts", int32(0), int32(1), int32(1), int32(1));
+        byte[] twoSamples = box("stts", int32(0), int32(1), int32(2), int32(1));
+        int at = indexOf(file, stts);
+        assertTrue(at > 0);
+        System.arraycopy(twoSamples, 0, file, at, twoSamples.length);
+        Metadata metadata = QuickTimeMetadataReader.readMetadata(new ByteArrayInputStream(file));
+
+        assertNull(metadata.getFirstDirectoryOfType(QuickTimeLivePhotoDirectory.class));
+        assertNoErrors(metadata);
+    }
+
+    private static int indexOf(byte[] haystack, byte[] needle)
+    {
+        for (int i = 0; i <= haystack.length - needle.length; i++) {
+            int j = 0;
+            while (j < needle.length && haystack[i + j] == needle[j])
+                j++;
+            if (j == needle.length)
+                return i;
+        }
+        return -1;
     }
 
     /** 'ftyp', a 'moov' with the movie header and one 'mebx' track whose edit list is {@code elst}, then an 'mdat' holding {@code sample}. */
