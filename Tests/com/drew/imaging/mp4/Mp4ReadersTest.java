@@ -85,6 +85,31 @@ public class Mp4ReadersTest
     }
 
     @Test
+    public void testKeysWithoutATagAreKeptByNameAndTagsKnowTheirKey() throws Exception
+    {
+        // a vendor's text key, a numeric one (type 23, a float) and one whose value is binary, which is left out
+        byte[] meta = box("meta",
+            handler("mdta"),
+            box("keys", int32(0), int32(4), key("com.android.version"), key("com.example.score"),
+                key("com.example.blob"), key("com.apple.quicktime.make")),
+            box("ilst",
+                box(int32(1), box("data", int32(1), int32(0), ascii("14"))),
+                box(int32(2), box("data", int32(23), int32(0), ByteBuffer.allocate(4).putFloat(0.75f).array())),
+                box(int32(3), box("data", int32(13), int32(0), new byte[] {1, 2, 3})),
+                box(int32(4), box("data", int32(1), int32(0), ascii("Apple")))));
+        Metadata metadata = Mp4MetadataReader.readMetadata(new ByteArrayInputStream(concat(ftyp("qt  "), box("moov", meta))));
+
+        QuickTimeMetadataDirectory directory = metadata.getFirstDirectoryOfType(QuickTimeMetadataDirectory.class);
+        assertNotNull(directory);
+        assertEquals("com.android.version: 14\ncom.example.score: 0.75", directory.getDescription(QuickTimeMetadataDirectory.TAG_OTHER_KEYS));
+        assertEquals("Apple", directory.getString(QuickTimeMetadataDirectory.TAG_MAKE));
+        assertEquals("com.apple.quicktime.make", QuickTimeMetadataDirectory.getKey(QuickTimeMetadataDirectory.TAG_MAKE));
+        assertEquals("©nam", QuickTimeMetadataDirectory.getKey(QuickTimeMetadataDirectory.getTagType("©nam")));
+        assertEquals(2, directory.getTagCount());
+        assertNoErrors(metadata);
+    }
+
+    @Test
     public void testITunesListFillsTheMetadataDirectory() throws Exception
     {
         // 'udta/meta' is a FullBox, unlike QuickTime's 'moov/meta'

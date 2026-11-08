@@ -53,6 +53,10 @@ No exhaustive MP4 feature-parity check is implied by this documentation migratio
   bytes (types 21, 22 and 65 to 78), 32-bit and 64-bit floats, and arrays of
   32-bit integers. `udta` is also read for the ISO 6709 location (`©xyz`), title,
   comment and Windows Media `Xtra` tags.
+  A `keys` key without a tag of its own, such as a vendor's `com.android.version`,
+  is kept by name with its text or numeric value in the directory's "Other Keys"
+  (a list of `KeyValuePair`, as PNG's textual chunks are kept), and
+  `QuickTimeMetadataDirectory.getKey(tag)` gives a tag's key back.
   iTunes atoms with an implicit value type are read by their kind: `trkn` and
   `disk` as number and count, `gnre` and the flag and ID atoms (`cpil`, `pgap`,
   `stik`, `tmpo`, `cnID`, …) as integers, the rest as text; `covr` is the

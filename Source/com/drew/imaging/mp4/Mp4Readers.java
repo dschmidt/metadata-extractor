@@ -846,13 +846,54 @@ final class Mp4Readers
     {
         if (length < 1 || length > 8)
             return;
-        long value = signed ? reader.getInt8() : reader.getUInt8();
-        for (int i = 1; i < length; i++)
-            value = (value << 8) | reader.getUInt8();
+        long value = readInteger(reader, length, signed);
         if (length <= 4 && (signed || length < 4))
             directory.setInt(tag, (int) value);
         else
             directory.setLong(tag, value);
+    }
+
+    private static long readInteger(@NotNull SequentialReader reader, int length, boolean signed) throws IOException
+    {
+        long value = signed ? reader.getInt8() : reader.getUInt8();
+        for (int i = 1; i < length; i++)
+            value = (value << 8) | reader.getUInt8();
+        return value;
+    }
+
+    /** The value of a key without a tag, as text, for {@link QuickTimeMetadataDirectory#TAG_OTHER_KEYS}. */
+    private static void readOtherKey(@NotNull QuickTimeMetadataDirectory directory, @NotNull String key,
+                                     @NotNull SequentialReader reader, int type, int length) throws IOException
+    {
+        String value;
+        switch (type) {
+            case 1:
+                value = reader.getString(length, "UTF-8");
+                break;
+            case 21: case 65: case 66: case 67: case 74:
+                if (length < 1 || length > 8)
+                    return;
+                value = Long.toString(readInteger(reader, length, true));
+                break;
+            case 22: case 75: case 76: case 77: case 78:
+                if (length < 1 || length > 8)
+                    return;
+                value = Long.toString(readInteger(reader, length, false));
+                break;
+            case 23:
+                if (length != 4)
+                    return;
+                value = Float.toString(reader.getFloat32());
+                break;
+            case 24:
+                if (length != 8)
+                    return;
+                value = Double.toString(reader.getDouble64());
+                break;
+            default:
+                return;
+        }
+        directory.addOtherKey(key, value);
     }
 
     private static void readData(@NotNull IsoBoxContext box) throws IOException
@@ -873,13 +914,19 @@ final class Mp4Readers
         }
         Integer tag = QuickTimeMetadataDirectory.getTagType(key);
         long payloadSize = box.box().payloadSize;
-        if (tag == null || payloadSize < 8)
+        if (payloadSize < 8)
             return;
         SequentialReader reader = box.payload();
         int length = (int) (payloadSize - 8);
         // type indicator: a type set byte and a 24-bit well-known type; then 4 bytes locale indicator
         int type = reader.getInt32() & 0xFFFFFF;
         reader.skip(4);
+        if (tag == null) {
+            // a key without a tag of its own is kept by name, as text, if it has a textual or numeric value
+            if (meta.handler.equals(HANDLER_METADATA_DATA))
+                readOtherKey(meta.directory, key, reader, type, length);
+            return;
+        }
         if (type == 0) {
             // implicit: iTunes' binary values, else text as the list reader always read it
             if (key.equals("trkn") || key.equals("disk")) {

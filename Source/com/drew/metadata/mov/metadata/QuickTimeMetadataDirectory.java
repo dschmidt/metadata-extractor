@@ -20,11 +20,17 @@
  */
 package com.drew.metadata.mov.metadata;
 
+import com.drew.lang.Charsets;
+import com.drew.lang.KeyValuePair;
 import com.drew.lang.annotations.NotNull;
 import com.drew.lang.annotations.Nullable;
+import com.drew.metadata.StringValue;
 import com.drew.metadata.mov.QuickTimeDirectory;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * @author Payton Garland
@@ -71,6 +77,13 @@ public class QuickTimeMetadataDirectory extends QuickTimeDirectory
     public static final int TAG_ORIGINATING_SIGNATURE   = 0x051F;
     public static final int TAG_PIXEL_DENSITY           = 0x0520;
 
+    /**
+     * The keys of a {@code keys} box that have no tag of their own, with their values as text,
+     * as a {@code List<KeyValuePair>}: the vendor's own keys of a movie, such as
+     * {@code com.android.version}, alongside the Apple keys the tags cover.
+     */
+    public static final int TAG_OTHER_KEYS              = 0x0600;
+
     public QuickTimeMetadataDirectory()
     {
         this.setDescriptor(new QuickTimeMetadataDescriptor(this));
@@ -82,6 +95,9 @@ public class QuickTimeMetadataDirectory extends QuickTimeDirectory
     @NotNull
     static final HashMap<String, Integer> _tagIntegerMap = new HashMap<String, Integer>();
 
+    @NotNull
+    private static final HashMap<Integer, String> _tagKeyMap = new HashMap<Integer, String>();
+
     /**
      * The tag for a metadata key, such as {@code com.apple.quicktime.make} from a {@code keys}
      * box or {@code ©nam} from an iTunes-style list, or {@code null} if it has none.
@@ -90,6 +106,27 @@ public class QuickTimeMetadataDirectory extends QuickTimeDirectory
     public static Integer getTagType(@NotNull String key)
     {
         return _tagIntegerMap.get(key);
+    }
+
+    /**
+     * The key a tag was read from, the reverse of {@link #getTagType}: the {@code keys} box
+     * key such as {@code com.apple.quicktime.make}, or the iTunes-style list atom type such
+     * as {@code ©nam}; {@code null} for a tag no key maps to.
+     */
+    @Nullable
+    public static String getKey(int tagType)
+    {
+        return _tagKeyMap.get(tagType);
+    }
+
+    /** Adds a key without a tag of its own and its value to {@link #TAG_OTHER_KEYS}. */
+    public void addOtherKey(@NotNull String key, @NotNull String value)
+    {
+        Object existing = getObject(TAG_OTHER_KEYS);
+        @SuppressWarnings("unchecked")
+        List<KeyValuePair> pairs = existing instanceof List ? (List<KeyValuePair>) existing : new ArrayList<KeyValuePair>();
+        pairs.add(new KeyValuePair(key, new StringValue(value.getBytes(Charsets.UTF_8), Charsets.UTF_8)));
+        setObject(TAG_OTHER_KEYS, pairs);
     }
 
     static
@@ -245,6 +282,14 @@ public class QuickTimeMetadataDirectory extends QuickTimeDirectory
         _tagNameMap.put(TAG_MODEL, "Model");
         _tagNameMap.put(TAG_ORIGINATING_SIGNATURE, "Originating Signature");
         _tagNameMap.put(TAG_PIXEL_DENSITY, "Pixel Density");
+        _tagNameMap.put(TAG_OTHER_KEYS, "Other Keys");
+
+        for (Map.Entry<String, Integer> entry : _tagIntegerMap.entrySet()) {
+            // the Apple key of a tag wins over an iTunes atom that shares it
+            String known = _tagKeyMap.get(entry.getValue());
+            if (known == null || (entry.getKey().indexOf('.') >= 0 && known.indexOf('.') < 0))
+                _tagKeyMap.put(entry.getValue(), entry.getKey());
+        }
 
         _tagNameMap.put(0x0400, "iTunes Info");
         _tagNameMap.put(0x0401, "Parent Short Title");

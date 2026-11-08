@@ -20,8 +20,11 @@
  */
 package com.drew.metadata.mov.metadata;
 
+import com.drew.lang.annotations.Nullable;
 import com.drew.metadata.mov.QuickTimeDescriptor;
 import com.drew.metadata.mov.QuickTimeDirectory;
+
+import java.util.List;
 
 import static com.drew.metadata.mov.metadata.QuickTimeMetadataDirectory.*;
 
@@ -43,9 +46,27 @@ public class QuickTimeMetadataDescriptor extends QuickTimeDescriptor
                 return getArtworkDescription();
             case TAG_LOCATION_ROLE:
                 return getLocationRoleDescription();
+            case TAG_OTHER_KEYS:
+                return getOtherKeysDescription();
             default:
                 return super.getDescription(tagType);
         }
+    }
+
+    /** One {@code key: value} line per key. */
+    @Nullable
+    public String getOtherKeysDescription()
+    {
+        Object object = _directory.getObject(TAG_OTHER_KEYS);
+        if (!(object instanceof List))
+            return null;
+        StringBuilder text = new StringBuilder();
+        for (Object pair : (List<?>) object) {
+            if (text.length() != 0)
+                text.append('\n');
+            text.append(pair);
+        }
+        return text.toString();
     }
 
     private String getArtworkDescription()
