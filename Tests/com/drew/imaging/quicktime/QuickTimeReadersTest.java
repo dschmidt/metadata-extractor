@@ -26,6 +26,7 @@ import com.drew.metadata.Metadata;
 import com.drew.metadata.mov.QuickTimeDirectory;
 import com.drew.metadata.mov.media.QuickTimeMediaDirectory;
 import com.drew.metadata.mov.media.QuickTimeSoundDirectory;
+import com.drew.metadata.mov.media.QuickTimeTextDirectory;
 import com.drew.metadata.mov.media.QuickTimeVideoDirectory;
 import com.drew.metadata.mov.metadata.QuickTimeMetadataDirectory;
 import org.junit.Test;
@@ -124,6 +125,26 @@ public class QuickTimeReadersTest
 
         // the file directory, the video and the sound directory; the 'meta' track has no directory of its own
         assertEquals(3, ((Collection<?>) metadata.getDirectories()).size());
+        assertNoErrors(metadata);
+    }
+
+    @Test
+    public void testEachTrackIsDatedFromItsOwnMediaHeader() throws Exception
+    {
+        long first = EPOCH_1904 + 1000;
+        long second = EPOCH_1904 + 2000;
+        // the first track has 'mdhd' before 'hdlr', the second after it, the third has none
+        byte[] video = box("trak", box("mdia", mediaHeader(first, first, 600, 600), handler("vide")));
+        byte[] sound = box("trak", box("mdia", handler("soun"), mediaHeader(second, second, 48000, 48000),
+            box("minf", box("stbl", box("stts", int32(0), int32(1), int32(48000), int32(1))))));
+        byte[] text = box("trak", box("mdia", handler("text")));
+        Metadata metadata = QuickTimeMetadataReader.readMetadata(new ByteArrayInputStream(concat(ftyp(), box("moov", video, sound, text))));
+
+        assertEquals(1000 * 1000L, metadata.getFirstDirectoryOfType(QuickTimeVideoDirectory.class).getDate(QuickTimeMediaDirectory.TAG_CREATION_TIME).getTime());
+        QuickTimeSoundDirectory soundDirectory = metadata.getFirstDirectoryOfType(QuickTimeSoundDirectory.class);
+        assertEquals(2000 * 1000L, soundDirectory.getDate(QuickTimeMediaDirectory.TAG_CREATION_TIME).getTime());
+        assertEquals(48000d, soundDirectory.getDouble(QuickTimeSoundDirectory.TAG_AUDIO_SAMPLE_RATE), 0d);
+        assertNull(metadata.getFirstDirectoryOfType(QuickTimeTextDirectory.class).getDate(QuickTimeMediaDirectory.TAG_CREATION_TIME));
         assertNoErrors(metadata);
     }
 

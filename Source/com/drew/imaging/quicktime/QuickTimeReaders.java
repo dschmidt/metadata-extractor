@@ -72,8 +72,8 @@ import java.util.List;
  * values) or {@code mdir} (an iTunes-style list).
  * <p>
  * The atom classes of {@code com.drew.metadata.mov.atoms} read the payloads as before. A
- * {@link QuickTimeContext} on the file context holds the latest {@code mdhd}'s times for the media
- * directories and sample tables, as the handler-based reader did.
+ * {@link QuickTimeContext} on each track's {@code mdia} holds its {@code mdhd}'s times for the
+ * media directory and sample tables of that track.
  */
 final class QuickTimeReaders
 {
@@ -150,7 +150,10 @@ final class QuickTimeReaders
             @Override
             public void read(@NotNull IsoBoxContext box) throws IOException
             {
-                new MediaHeaderAtom(box.payload(), new Atom(box.box()), context(box));
+                // the track's own times, for its media directory and sample tables
+                QuickTimeContext context = new QuickTimeContext();
+                new MediaHeaderAtom(box.payload(), new Atom(box.box()), context);
+                box.parent().put(QuickTimeContext.class, context);
             }
         }, MEDIA + "mdhd"),
         on(new IsoBoxReaders.Callback()
@@ -245,26 +248,38 @@ final class QuickTimeReaders
         return box.root().get(QuickTimeDirectory.class);
     }
 
-    @NotNull
+    /** The times of the {@code mdhd} of the track {@code box} is in, or {@code null} before it is read. */
+    @Nullable
     private static QuickTimeContext context(@NotNull IsoBoxContext box)
     {
-        return box.root().get(QuickTimeContext.class);
+        return box.get(QuickTimeContext.class);
     }
 
-    /** {@code mdia/hdlr}: the component type chooses the media directory, dated from the latest {@code mdhd}. */
+    /**
+     * {@code mdia/hdlr}: the component type chooses the media directory. It is dated from the
+     * track's own {@code mdhd} once the {@code mdia} is read, whichever of the two comes first.
+     */
     private static void readMediaHandler(@NotNull IsoBoxContext box) throws IOException
     {
         String componentType = new HandlerReferenceAtom(box.payload(), new Atom(box.box())).getComponentType();
-        QuickTimeDirectory directory = mediaDirectory(componentType);
+        final QuickTimeDirectory directory = mediaDirectory(componentType);
         if (directory == null)
             return;
-        QuickTimeContext context = context(box);
-        if (context.creationTime != null && context.modificationTime != null) {
-            directory.setDate(QuickTimeMediaDirectory.TAG_CREATION_TIME, DateUtil.get1Jan1904EpochDate(context.creationTime));
-            directory.setDate(QuickTimeMediaDirectory.TAG_MODIFICATION_TIME, DateUtil.get1Jan1904EpochDate(context.modificationTime));
-        }
         box.metadata().addDirectory(directory);
-        box.parent().put(Media.class, new Media(directory));
+        IsoBoxContext media = box.parent();
+        media.put(Media.class, new Media(directory));
+        media.whenDone(new IsoBoxReaders.Callback()
+        {
+            @Override
+            public void read(@NotNull IsoBoxContext done)
+            {
+                QuickTimeContext context = context(done);
+                if (context != null && context.creationTime != null && context.modificationTime != null) {
+                    directory.setDate(QuickTimeMediaDirectory.TAG_CREATION_TIME, DateUtil.get1Jan1904EpochDate(context.creationTime));
+                    directory.setDate(QuickTimeMediaDirectory.TAG_MODIFICATION_TIME, DateUtil.get1Jan1904EpochDate(context.modificationTime));
+                }
+            }
+        });
     }
 
     @Nullable
@@ -329,6 +344,8 @@ final class QuickTimeReaders
         if (media == null)
             return;
         QuickTimeContext context = context(box);
+        if (context == null)
+            return;
         if (media.directory instanceof QuickTimeVideoDirectory) {
             new TimeToSampleAtom(box.payload(), new Atom(box.box())).addMetadata((QuickTimeVideoDirectory) media.directory, context);
         } else if (media.directory instanceof QuickTimeSoundDirectory) {

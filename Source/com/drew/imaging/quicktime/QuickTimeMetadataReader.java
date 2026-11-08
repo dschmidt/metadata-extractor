@@ -29,7 +29,6 @@ import com.drew.lang.annotations.NotNull;
 import com.drew.lang.annotations.Nullable;
 import com.drew.metadata.Metadata;
 import com.drew.metadata.file.FileSystemMetadataReader;
-import com.drew.metadata.mov.QuickTimeContext;
 import com.drew.metadata.mov.QuickTimeDirectory;
 
 import java.io.File;
@@ -104,7 +103,6 @@ public class QuickTimeMetadataReader
         metadata.addDirectory(directory);
         IsoBoxContext root = errors == null ? IsoBoxContext.root(metadata, directory) : IsoBoxContext.root(metadata, errors);
         root.put(QuickTimeDirectory.class, directory);
-        root.put(QuickTimeContext.class, new QuickTimeContext());
         return root;
     }
 }
