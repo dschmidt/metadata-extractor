@@ -127,6 +127,18 @@ public class QuickTimeReadersTest
         assertNoErrors(metadata);
     }
 
+    /** Sony's XAVC files carry a QuickTime brand but write 'hdlr' in the ISO form, with a NUL-terminated name. */
+    @Test
+    public void testANulTerminatedHandlerNameChoosesTheMediaDirectoryToo() throws Exception
+    {
+        byte[] hdlr = box("hdlr", int32(0), new byte[4], ascii("vide"), new byte[12], ascii("Video Media Handler"), new byte[] {0});
+        byte[] trak = box("trak", box("mdia", mediaHeader(EPOCH_1904, EPOCH_1904, 600, 600), hdlr));
+        Metadata metadata = QuickTimeMetadataReader.readMetadata(new ByteArrayInputStream(concat(ftyp(), box("moov", trak))));
+
+        assertNotNull(metadata.getFirstDirectoryOfType(QuickTimeVideoDirectory.class));
+        assertNoErrors(metadata);
+    }
+
     @Test
     public void testAFileIsReadLikeAStream() throws Exception
     {

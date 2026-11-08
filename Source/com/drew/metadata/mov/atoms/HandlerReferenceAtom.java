@@ -23,6 +23,7 @@ package com.drew.metadata.mov.atoms;
 import com.drew.lang.SequentialReader;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 
 /**
  * https://developer.apple.com/library/content/documentation/QuickTime/QTFF/QTFFChap2/qtff2.html#//apple_ref/doc/uid/TP40000939-CH204-BBCIBHFD
@@ -49,6 +50,13 @@ public class HandlerReferenceAtom extends FullAtom
         reader.skip(4); // Reserved
         reader.skip(4); // Reserved
         reader.skip(4); // Reserved
-        componentName = reader.getString(reader.getUInt8());
+        // QuickTime writes the name as a counted string; the ISO base media form, which Sony
+        // and others use with a QuickTime brand, writes it NUL-terminated without a count
+        int remaining = (int) (atom.size - atom.headerSize - 24 - 1);
+        int count = reader.getUInt8();
+        if (atom.size == -1 || count <= remaining)
+            componentName = reader.getString(count);
+        else
+            componentName = (char) count + reader.getNullTerminatedString(remaining, StandardCharsets.UTF_8, false);
     }
 }
